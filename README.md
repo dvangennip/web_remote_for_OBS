@@ -25,3 +25,7 @@ Web remote UI for controlling OBS Studio via websockets
 - Audio filter settings don't pick up changes made in OBS directly (or any made via other obs-websocket clients).
 - Basic class for Camera Control included that's not functional in any way.
 - For more, see [Issues](/issues)
+
+## License
+- [Unlicense](https://unlicense.org/): This is free and unencumbered software released into the public domain.
+- Icons used are from [lucide.dev](https://lucide.dev/) (see [their license](https://github.com/lucide-icons/lucide/blob/master/LICENSE))

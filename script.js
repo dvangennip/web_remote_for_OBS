@@ -1,42 +1,5 @@
 /**
- * TODO
- * 
- * Features
- * - enable some means to start/stop streaming
- * - enable some means to start/stop/pause recording
- * - implement StreamStarted/StreamStopped events
- * - implement StreamStatus event
- * - implement RecordingStarted/RecordingStopped/RecordingPaused/RecordingResumed events
- * - ^ once done, remove/pause/deprecate update_on_interval
- * - reimplement audio filters:
- * --- filter settings are not updated
- * - Slider name+value hard to read when mouse/finger is active over its area -> push text over the side edges?
- * - add time/frame vs available time/frame indicator
- * - add vectorscope based on https://github.com/mikkab/vectorscopeJS?
- * 
- * Camera Control Unit idea
- * - separate module/script
- * - Consider CCU/preset interface for NDI cameras
- * - using VISCA over IP
- * - see: https://help.ptzoptics.com/support/solutions/articles/13000077734-an-introduction-to-ip-control-scripting-for-ptzoptics-cameras
- * --- python examples look really simple:
- * 		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
- * 		s.connect(('192.168.100.81', 1259))
- * 		data = bytes.fromhex('8101043F0201FF')
- * 		s.send(data)
- * 		s.close()
- * - see: https://github.com/misterhay/VISCA-IP-Controller
- * - use https://packetsender.com/ for testing commands
- * - build around websocket connection in JS?
- * --- needs intermediate as browsers don't support regular sockets
- * 
- * Bugs
- * - fader/slider/knob active state and source active classes clash (use source-active class for one?)
- * - fader/knob don't work on touchscreens
- * - visibility does not update properly, as it's tied to per-scene visibility
- * --- (needs refresh on scene changed)
- * --- also, active state may adjust after visibility changes, so needs check as well
- * - disabled button state not shown visually
+ * OBS_web_remote code
  */
 
 /**
