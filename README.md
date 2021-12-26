@@ -3,7 +3,9 @@ Web remote UI for controlling OBS Studio via websockets
 
 ## Features
 - Switch between scenes
-- Scene previews (updates every 2 seconds for program and preview, 10 seconds for inactive scenes)
+- Scene previews
+    - Updates every 2 seconds for Program and Preview scenes
+    - Updates every 10 seconds for inactive scenes
 - Control audio sources
     - Mute/unmute
     - Volume
@@ -16,4 +18,10 @@ Web remote UI for controlling OBS Studio via websockets
 3. Point browser to `localhost:8000` (or any other port your server indicates)
 4. Control OBS via the webpage.
     - You'll have to enter the obs-websocket on the page before connecting.
-    - Code relies on [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js)
+    - Code relies on [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js) (included here)
+
+## Known issues
+- Start/stop streaming and recording buttons are not functional yet.
+- Audio filter settings don't pick up changes made in OBS directly (or any made via other obs-websocket clients).
+- Basic class for Camera Control included that's not functional in any way.
+- For more, see [Issues](/issues)
