@@ -1,11 +1,18 @@
 # OBS web remote
 Web remote UI for controlling OBS Studio via the obs-websocket plugin
 
+## How to use
+1. Start OBS. Make sure [obs-websocket plugin](https://github.com/obsproject/obs-websocket) is installed (v4.9.1).
+2. Point browser to [`index.html`](/index.html)
+3. Control OBS via the webpage.
+    - You'll have to enter the obs-websocket connection details on the page before connecting.
+    - Code relies on [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js) (included here)
+
 ## Features
 - Enable/disable Studio Mode (hotkey: `S`)
 - Switch between scenes
     - Transition hotkey: `T` (only when in Studio Mode)
-    - Left click to switch to scene or (in Studio Mode) set Preview scene
+    - Left click to switch to scene or (when in Studio Mode) set Preview scene
     - Use `0-9` to set numbered scene (only available for the first ten scenes)
     - Right click (or `ctrl + [0-9]`) to immediately set scene as Program (when in Studio Mode)
 - Scene previews
@@ -15,15 +22,8 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
     - Mute/unmute
     - Volume
     - Filter settings (not all filters are supported)
-- A few custom adjustments to known scene elements (not generic)
 - Fullscreen toggle hotkey: `F`
-
-## How to use
-1. Start OBS. Make sure [obs-websocket plugin](https://github.com/obsproject/obs-websocket) is installed (v4.9.1).
-2. Point browser to [`index.html`](/index.html)
-3. Control OBS via the webpage.
-    - You'll have to enter the obs-websocket connection details on the page before connecting.
-    - Code relies on [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js) (included here)
+- A few custom adjustments to known scene elements (not generic, so this would need omitting)
 
 ## Notes and known issues
 - Any scenes with `hidden` or `subscene` in their name are ignored and not shown in the scene list.
