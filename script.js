@@ -1,4 +1,45 @@
 /**
+ * TODO
+ * 
+ * Features
+ * - enable some means to start/stop streaming
+ * - enable some means to start/stop/pause recording
+ * - implement StreamStarted/StreamStopped events
+ * - implement StreamStatus event
+ * - implement RecordingStarted/RecordingStopped/RecordingPaused/RecordingResumed events
+ * - ^ once done, remove/pause/deprecate update_on_interval
+ * - reimplement audio filters:
+ * --- filter settings are not updated
+ * - Slider name+value hard to read when mouse/finger is active over its area -> push text over the side edges?
+ * - add time/frame vs available time/frame indicator
+ * - add vectorscope based on https://github.com/mikkab/vectorscopeJS?
+ * 
+ * Camera Control Unit idea
+ * - separate module/script
+ * - Consider CCU/preset interface for NDI cameras
+ * - using VISCA over IP
+ * - see: https://help.ptzoptics.com/support/solutions/articles/13000077734-an-introduction-to-ip-control-scripting-for-ptzoptics-cameras
+ * --- python examples look really simple:
+ * 		s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
+ * 		s.connect(('192.168.100.81', 1259))
+ * 		data = bytes.fromhex('8101043F0201FF')
+ * 		s.send(data)
+ * 		s.close()
+ * - see: https://github.com/misterhay/VISCA-IP-Controller
+ * - use https://packetsender.com/ for testing commands
+ * - build around websocket connection in JS?
+ * --- needs intermediate as browsers don't support regular sockets
+ * 
+ * Bugs
+ * - fader/slider/knob active state and source active classes clash (use source-active class for one?)
+ * - fader/knob don't work on touchscreens
+ * - visibility does not update properly, as it's tied to per-scene visibility
+ * --- (needs refresh on scene changed)
+ * --- also, active state may adjust after visibility changes, so needs check as well
+ * - disabled button state not shown visually
+ */
+
+/**
  * Extends Element to ease creating new elements (based on EnyoJS v1)
  */
 if (!Element.make) {
@@ -24,41 +65,155 @@ if (!Element.make) {
 	}
 }
 
-class MinimalRequest {
-	constructor (url, data, callback) {
-		this.xhr = new XMLHttpRequest();
+var get_slug = function (inString) {
+	// using replaceAll is apparently too new (Safari 13+, Chrome 85+), so use replace with regex //global modifier
+	return inString.toLowerCase().replace(/\s/g, '_').replace(/\+/g,'_').replace(/\//g,'_');
+}
 
-		this.xhr.responseType = 'json';
+var mul_to_decibel = function (inMul) {
+	// assumption mul is in range [0,1], dB [-94.5,0]
+	return ((0.212 * Math.log10(inMul) + 1) * 94.5) - 94.5;
 
-		this.xhr.open('POST', url);
+	// from obs-ws
+	// volDb = round(20 * math.log10(volMul[1])) + 100 if volMul[1] and volMul[2] != 0 else 0
+	// from OBS
+	// return (mul == 0.0f) ? -INFINITY : (20.0f * log10f(mul));
+}
 
-		this.xhr.setRequestHeader('Content-Type',     'application/json');
-		this.xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-		this.xhr.setRequestHeader('Accept',           'application/json');
-		this.xhr.setRequestHeader('X-Request',        'JSON');
+var round = function (value, precision) {
+	let multiplier = Math.pow(10, precision || 0);
+	return Math.round(value * multiplier) / multiplier;
+}
 
-		if (callback && typeof(callback) == 'function') {
-			this.xhr.onloadend = function (e) {
-				callback(e.target.response, e.target);
-			};
-		}
-		
-		if (data) {
-			this.xhr.send( JSON.stringify(data) );
+
+class OBS {
+	constructor () {
+		this.connected = false;
+		this.obs       = new OBSWebSocket();
+
+		this.host      = localStorage.getItem('host') || 'localhost:4444';
+		this.password  = localStorage.getItem('password') || '';
+
+		document.getElementById('obs_ws_host').value = this.host;
+		document.getElementById('obs_ws_password').value = this.password;
+
+		// set up basic event handlers
+		this.obs.on('error', err => {
+			console.error('socket error:', err);
+		});
+
+		this.obs.on('ConnectionOpened', () => {
+			document.getElementById('obs_ws_connect').innerHTML = 'Disconnect';
+		});
+
+		this.obs.on('ConnectionClosed', () => {
+			console.log('Disconnected');
+			this.connected = false;
+
+			document.getElementById('obs_ws_connect').innerHTML = 'Connect';
+
+			document.getElementById('obs_ws_connection').classList.remove('hidden');
+
+			obsr.on_disconnected();
+		});
+
+		this.obs.on('AuthenticationFailure', async () => {
+			// TODO give error message
+		});
+
+		this.obs.on('AuthenticationSuccess', async () => {
+			let v = await this.obs.send('GetVersion', {});
+			console.log('Connected to obs-websocket v' + v['obs-websocket-version'] + ' on OBS v' + v['obs-studio-version']);
+			this.connected = true;
+
+			document.getElementById('obs_ws_connection').classList.add('hidden');
+			
+			// kickstart update processes in OBSRemote
+			obsr.on_connected();
+		});
+
+		// set up connection pane
+		document.getElementById('btn_toggle_connect').addEventListener('click', this.toggle_form.bind(this));
+		document.getElementById('obs_ws_connect').addEventListener('click', this.connect_form.bind(this));
+	}
+
+	// essentially just passed on to the internal obs.on function
+	on (event, func) {
+		this.obs.on(event, func);
+	}
+
+	toggle_form () {
+		document.getElementById('obs_ws_connection').classList.toggle('hidden');
+	}
+
+	connect_form () {
+		if (this.connected) {
+			this.disconnect();
 		} else {
-			this.xhr.send();
+			let host     = document.getElementById('obs_ws_host').value;
+			let password = document.getElementById('obs_ws_password').value;
+
+			localStorage.setItem('host', host);
+			localStorage.setItem('password', password);
+
+			this.connect(host, password);
+		}
+	}
+
+	async connect (host, password) {
+		this.host      = host || this.host;
+		this.password  = password || this.password;
+		
+		let secure     = location.protocol === 'https:' || this.host.endsWith(':443');
+		
+		if (this.host.indexOf('://') !== -1) {
+			let url = new URL(this.host);
+			secure = url.protocol === 'wss:' || url.protocol === 'https:';
+			this.host = url.hostname + ':' + (url.port ? url.port : secure ? 443 : 80);
+		}
+		console.log('Connecting to:', this.host, '- secure:', secure, '- using password:', this.password);
+		
+		await this.disconnect();
+		this.connected = false;
+		
+		try {
+			await this.obs.connect({ address: this.host, password: this.password, secure });
+		} catch (e) {
+			console.log(e);
+		}
+	}
+
+	async disconnect () {
+		await this.obs.disconnect();
+		this.connected = false;
+	}
+
+	async sendCommand (command, params) {
+		// TODO remove this
+		if (!this.connected) return;
+
+		try {
+			return await this.obs.send(command, params || {});
+		} catch (e) {
+			console.log('Error sending command', command, ' - error is:', e);
+			return {};
 		}
 	}
 }
 
-class OBSRemote {
 
+class OBSRemote {
 	constructor () {
-		this.studio_mode   = false;
-		this.scene_list    = [];
-		this.scene_program = '';
-		this.scene_preview = '';
-		this.audio_list    = [];
+		this.studio_mode    = false;
+		this.scene_list     = [];
+		this.scenes         = {};
+		this.scene_program  = '';
+		this.scene_preview  = '';
+		this.audio_list     = [];
+		this.tick           = 0;
+
+		this.clock          = document.getElementById('status_clock');
+		this.clock_text     = document.getElementById('status_clock_time');
 
 		// set event listeners
 		this.button_transition = document.getElementById('btn_transition');
@@ -67,9 +222,6 @@ class OBSRemote {
 		this.button_toggle_mode = document.getElementById('btn_toggle_mode');
 		this.button_toggle_text = document.getElementById('btn_toggle_mode_text');
 		this.button_toggle_mode.addEventListener('click', this.toggle_studio_mode.bind(this), false);
-		this.button_toggle_text.classList.add('hidden');
-		this.button_toggle_mode.querySelector('.icon-exit-studio-mode').classList.remove('hidden');
-		this.button_toggle_mode.classList.add('small-button');
 
 		this.button_fullscreen = document.getElementById('btn_toggle_fullscreen');
 		// if fullscreen functionallity is available, set it up, otherwise hide button
@@ -80,26 +232,81 @@ class OBSRemote {
 			this.button_fullscreen.className = 'hidden';
 		}
 
-		window.addEventListener('keydown', this.handle_key_event.bind(this), false);
+		// status stream / recording
+		document.getElementById('status_stream').addEventListener('click', (e) => {
+			document.getElementById('streaming_edit_list').classList.toggle('hidden');
+		});
+		document.getElementById('status_recording').addEventListener('click', (e) => {
+			document.getElementById('streaming_edit_list').classList.toggle('hidden');
+		});
 
-		// setup
-		this.get_studio_mode();
+		// status checklist events
+		let check_items   = document.getElementsByClassName('checklist-item');
+
+		for (var i = 0; i < check_items.length; i++) {
+			check_items[i].addEventListener('change', this.update_checklist.bind(this));
+		}
+		this.update_checklist();
+
+		document.getElementById('status_checklist').addEventListener('click', (e) => {
+			document.getElementById('status_checklist_list').classList.toggle('hidden');
+		});
+
+		// start interval updates
+		window.setInterval(this.update_status_clock.bind(this),1000);
+
+		// this is more of a setup function than updater
+		this.update_source_list();
+
+		// setup obs event handlers
+		obs.on('StudioModeSwitched',     this.on_studio_mode_switched.bind(this));
+		obs.on('SwitchScenes',           this.on_scene_changed.bind(this));
+		obs.on('PreviewSceneChanged',    this.on_preview_changed.bind(this));
+
+		obs.on('ScenesChanged',          this.on_scenes_changed.bind(this));
+		obs.on('SourceCreated',          this.on_source_created.bind(this));
+		obs.on('SourceDestroyed',        this.on_source_destroyed.bind(this));
+		obs.on('SourceRenamed',          this.on_source_renamed.bind(this));
+	}
+
+	on_connected () {
+		// start requesting updates
+
+		//await get_video_info // GetVideoInfo -> outputWidth/outputHeight
 
 		this.get_scene_list();
+
+		this.get_studio_mode();
 		
 		this.update_audio_list();
-
-		this.update_source_list();
 
 		// setup interval for refreshing data
 		self.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
 
-		window.setInterval(this.update_status_clock.bind(this),1000);
+		window.addEventListener('keydown', this.handle_key_event.bind(this), false);
+	}
+
+	on_disconnected () {
+		window.clearTimeout(self.interval_timer);
+
+		for (var name in this.scenes) {
+			this.scenes[name].pause_update();
+		}
+
+		// TODO loop over audio sources as well
+	}
+
+	update_on_interval () {
+		// clear timeout
+		window.clearTimeout(self.interval_timer);
+
+		this.update_status_list();
+
+		// reset interval timeout
+		self.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
 	}
 
 	toggle_fullscreen () {
-		var b = document.getElementsByTagName('body')[0];
-
 		if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
 			document.documentElement.requestFullscreen();
 		} else if (document.exitFullscreen) {
@@ -111,332 +318,222 @@ class OBSRemote {
 		this.button_fullscreen.className = document.fullscreenElement ? 'top-button small-button fullscreen' : 'top-button small-button';
 	}
 
-	get_studio_mode () {
-		new MinimalRequest('/call/GetStudioModeStatus', undefined, function (response) {
-			if (response.status == 'ok') {
-				this.studio_mode = response['studio-mode'];
-				
-				this.update_studio_mode();
+	async get_studio_mode () {
+		let response = await obs.sendCommand('GetStudioModeStatus');
 
-				this.update_scenes();
-			}
-		}.bind(this));
+		this.studio_mode = (response && response.studioMode) || false;
+		
+		this.update_studio_mode();
+		this.update_scenes();
+	}
+
+	on_studio_mode_switched (e) {
+		this.studio_mode = e['new-state'];
+		this.update_studio_mode();
 	}
 
 	update_studio_mode () {
 		// update stuff
 		if (!this.studio_mode) {
+			if (this.scenes[ this.scene_preview ]) {
+				this.scenes[ this.scene_preview ].is_preview = false;
+				this.scenes[ this.scene_preview ].update();
+			}
 			this.scene_preview = '';
 		}
-		document.getElementById('view_preview').className = (this.studio_mode) ? '' : 'hidden';
 		this.button_transition.className  = (this.studio_mode) ? '' : 'hidden';
-		this.button_toggle_text.innerHTML = (this.studio_mode) ? 'Studio' : 'Direct';
 	}
 
-	toggle_studio_mode() {
-		new MinimalRequest('/emit/ToggleStudioMode', undefined, function (response) {
-			if (response.status == 'ok') {
-				this.get_studio_mode();
-			}
-		}.bind(this));
-
+	async toggle_studio_mode () {
 		// update immediately for fast feedback
 		this.studio_mode = !this.studio_mode;
 		this.update_studio_mode();
+		
+		await obs.sendCommand('ToggleStudioMode');
 	}
 
-	get_scene_list () {
-		new MinimalRequest('/call/GetSceneList', undefined, function (response) {
-			if (response.status == 'ok') {
-				// update data
-				this.scene_program = response['current-scene'];
-				// update scenes but skip hidden scenes (any with 'subscene' in the name)
-				this.scene_list    = response['scenes'].filter(function (i) {
-					return i.name.indexOf('subscene') === -1;
-				});
+	async get_scene_list () {
+		let response = await obs.sendCommand('GetSceneList');
 
-				this.update_scene_list();
+		// update scenes but skip hidden scenes (any with 'subscene' or 'hidden' in the name)
+		this.scene_list = response['scenes'].filter(function (i) {
+			let include_scene = true;
+			if (i.name.indexOf('subscene') != -1) {
+				include_scene = false;
 			}
-		}.bind(this));
+			if (i.name.indexOf('hidden') != -1) {
+				include_scene = false;
+			}
+			return include_scene;
+		});
+
+		this.update_scene_list();
+
+		// update program scene data
+		this.on_scene_changed({'scene-name': response['current-scene']})
 	}
 
 	update_scene_list () {
+		this.tick += 1;
+
 		// catch some odd error
 		if (!this.scene_list) {
 			return;
 		}
 
-		for (var i = 0; i < this.scene_list.length; i++) {
-			var name = this.scene_list[i].name,
-				slug = this.slug(name);
+		for (let i = 0; i < this.scene_list.length; i++) {
+			let name = this.scene_list[i].name;
 
-			var li_el = document.getElementById('li_scene_' + slug);
-
-			if (li_el) {
-				// if element exists, edit it
-				var btn_el = document.getElementById('btn_scene_' + slug);
-
-				if (btn_el) {
-					// console.log(this.scene_program, this.scene_preview, name, this.scene_program === name, this.scene_preview === name);
-					if (this.scene_program === name) {
-						btn_el.className = 'program';
-					} else if (this.scene_preview === name) {
-						btn_el.className = 'preview';
-					} else {
-						btn_el.className = '';
-					}
-				}
+			if (this.scenes[name]) {
+				// if found, update
+				this.scenes[name].change_index(i);
+				this.scenes[name].update(this.tick);
 			} else {
-				// otherwise, create element
-				li_el      = Element.make('li', {'id': 'li_scene_' + slug});
-				var btn_el = Element.make('button', {
-					'id'       : 'btn_scene_' + slug,
-					'innerHTML': name,
-					'data-bc'  : (i < 9) ? i + 1 : '-',
-					'events'   : {
-						'click'   : this.set_scene.bind(this, name)
-					}
-				});
+				// if not found, create element
+				let scene = new SourceScene(i, name);
 
-				li_el.appendChild(btn_el);
-				document.getElementById('scene_list').appendChild(li_el);
+				this.scenes[name] = scene;
+				this.scenes[name].update(this.tick);
+				document.getElementById('scene_list').appendChild(scene.el);
+			}
+		}
 
-				this.update_scenes();
+		// remove scenes that are no longer current
+		for (let sname in this.scenes) {
+			if (this.scenes[sname].last_update != this.tick) {
+				this.scenes[sname].pause_update();
+				document.getElementById('scene_list').removeChild( this.scenes[sname].el );
+				delete this.scenes[sname];
 			}
 		}
 	}
 
-	update_scenes () {
+	async update_scenes () {
 		if (this.studio_mode) {
-			this.get_preview_scene(true);
+			await this.get_preview_scene();
 		}
-		this.get_program_scene(true);
+		await this.get_program_scene();
 
-		// add a minor delay as we can't rely on async functionality on very old browsers
-		window.setTimeout(this.update_scene_list.bind(this), 250);
-	}
-
-	get_program_scene (ignoreUpdateScenes) {
-		new MinimalRequest('/call/GetCurrentScene', undefined, function (response) {
-			if (response.status == 'ok') {
-				this.scene_program = response['name'];
-					
-				if (!ignoreUpdateScenes) {
-					this.update_scene_list();
-				}
-			}
-		}.bind(this));
-	}
-
-	get_preview_scene (ignoreUpdateScenes) {
-		new MinimalRequest('/call/GetPreviewScene', undefined, function (response) {
-			if (response.status == 'ok') {
-				this.scene_preview = response['name'];
-					
-				if (!ignoreUpdateScenes) {
-					this.update_scene_list();
-				}
-			}
-		}.bind(this));
-	}
-
-	set_scene (inSceneName) {
-		var url = (this.studio_mode) ? '/call/SetPreviewScene' : '/call/SetCurrentScene';
-		
-		new MinimalRequest(url, {'scene-name': inSceneName}, function (response) {
-			if (response.status == 'ok') {
-				this.update_scenes();
-			}
-		}.bind(this));
-
-		// update immediately for fast feedback
-		if (this.studio_mode) {
-			this.scene_preview = inSceneName;
-		} else {
-			this.scene_program = inSceneName;
-		}
 		this.update_scene_list();
 	}
 
-	transition () {
-		new MinimalRequest('/call/TransitionToProgram', undefined, function (response) {
-			if (response.status == 'ok') {
-				// give OBS some time to swap
-				window.setTimeout(this.update_scenes.bind(this), 500);
-			}
-		}.bind(this));
+	async get_program_scene () {
+		let response = await obs.sendCommand('GetCurrentScene');
 
-		// update immediately for fast feedback
-		var temp           = this.scene_preview;
-		this.scene_preview = this.scene_program;
-		this.scene_program = temp;
-		this.update_scene_list();
-
-		var view_preview = document.getElementById('view_preview');
-		var view_program = document.getElementById('view_program');
-		var temp_src     = view_preview.src;
-		view_preview.src = view_program.src;
-		view_program.src = temp_src;
+		// this.scene_program = response['name'];
+		this.on_scene_changed({'scene-name': response['name']});
 	}
 
-	set_source_screenshot (isPreview) {
-		var width      = document.querySelector('body').offsetWidth - 10 - 12 - 10;  // subtract margins, borders, fudge factor
-		var img_width  = width;
-		if (this.studio_mode) {
-			img_width  = img_width / 2;
-		} else {
-			img_width  = Math.min(width, 600); // put a reasonable cap on the width to keep bandwidth low
-		}
-		var img_height = (1 / (1920/1080)) * img_width; // TODO improve ratio from current scene data
-		
-		new MinimalRequest('/call/TakeSourceScreenshot',
-			{'sourceName': (isPreview) ? this.scene_preview : this.scene_program, 'embedPictureFormat': 'jpg', 'width': img_width, 'height': img_height},
-			function (response) {
-				if (response.status == 'ok' && response.img) {
-					document.getElementById('view_' + ((isPreview) ? 'preview' : 'program') ).src = response.img;
-				}
-			}.bind(this)
-		);
+	async get_preview_scene () {
+		let response = await obs.sendCommand('GetPreviewScene');
+
+		this.on_preview_changed({'scene-name': response['name']});
 	}
 
-	update_audio_list () {
-		new MinimalRequest('/call/GetSourcesList', undefined, function (response) {
-			if (response.status == 'ok' && response.sources) {
-				// TODO merge nicely rather than delete all
-				this.audio_list = [];
-
-				for (var i = 0; i < response['sources'].length; i++) {
-					var s = response['sources'][i];
-					
-					// type is 'scene' or 'input'
-					if (s.type == 'input' && (s.typeId == 'ffmpeg_source' || s.typeId == 'ndi_source' || s.typeId == 'coreaudio_input_capture' || s.typeId == 'ios-camera-source')) {
-						this.audio_list.push(s)
-					}
-				}
-				
-				this.update_audio();
-			}
-		}.bind(this));
-	}
-
-	update_audio () {
-		for (var i = 0; i < this.audio_list.length; i++) {
-			this.get_volume(this.audio_list[i].name);
+	on_preview_changed (e) {
+		// first, update old preview scene	
+		if (this.scenes[ this.scene_preview ]) {	
+			this.scenes[ this.scene_preview ].unset_preview();
 		}
 
-		// use timeout to let volume data come back
+		this.scene_preview = e['scene-name'];
+
+		// update new preview scene
+		if (this.scenes[ e['scene-name'] ]) {
+			this.scenes[ e['scene-name'] ].set_preview();
+		}
+	}
+
+	on_scene_changed (e) {
+		// first, update old program scene	
+		if (this.scenes[ this.scene_program ]) {	
+			this.scenes[ this.scene_program ].unset_program();
+		}
+
+		this.scene_program = e['scene-name'];
+
+		// update new program scene
+		if (this.scenes[ e['scene-name'] ]) {
+			this.scenes[ e['scene-name'] ].set_program();
+		}
+
+		// also trigger audio to reevaluate its active state (after minor delay)
+		//   (no separate event exists for this)
 		window.setTimeout(function () {
-			for (var i = 0; i < this.audio_list.length; i++) {
-				var name   = this.audio_list[i].name,
-					slug   = this.slug(name),
-					volume = isNaN(this.audio_list[i].volume) ? 1 : this.audio_list[i].volume;
-
-				var li_el  = document.getElementById('li_audio_' + slug);
-
-				if (!li_el) {
-					// create elements
-					li_el      = Element.make('li', {'id': 'li_audio_' + slug});
-					var div_el = Element.make('div', {
-						'className': 'audio-label-bar'
-					});
-					var label_el = Element.make('label', {
-						'id': 'label_' + slug,
-						'innerHTML': (this.audio_list[i].muted) ? '🔇 ' + name : '🔈 ' + name,
-						'className': (this.audio_list[i].muted) ? 'muted' : '',
-						'events'   : {
-							'click': this.toggle_mute.bind(this, name)
-						}
-					});
-					var vol_el = Element.make('span', {
-						'id'       : 'audio_volume_' + slug,
-						'innerHTML': (this.audio_list[i].muted) ? 'muted' : this.round(this.mul_to_decibel(volume),1) + ' dB',
-						'className': (this.audio_list[i].muted) ? 'muted' : ''
-					});
-
-					li_el.appendChild(div_el);
-					div_el.appendChild(label_el);
-					div_el.appendChild(vol_el);
-					
-					
-					var input_el = Element.make('input', {
-						'id'    : 'audio_' + slug,
-						'name'  : 'audio_' + slug,
-						'type'  : 'range',
-						'min'   : 0,
-						'max'   : 1,
-						'step'  : 'any',
-						'value' : volume,
-						'events': {
-							'input': this.set_volume.bind(this, name)
-						}
-					});
-
-					li_el.appendChild(input_el);
-
-					var filter_bar_el = Element.make('div', {
-						'id'       : 'audio_' + slug + '_filter_bar',
-						'className': 'filter-bar'
-					});
-
-					li_el.appendChild(filter_bar_el);
-				
-					document.getElementById('audio_list').appendChild(li_el);
-
-					// finally, request audio filters for this source
-					this.get_source_filters(name);
-				} else {
-					// just update current element
-					let label_el = document.getElementById('label_' + slug),
-						vol_el   = document.getElementById('audio_volume_' + slug);
-
-					label_el.innerHTML = (this.audio_list[i].muted) ? '🔇 ' + name : '🔈 ' + name;
-					label_el.className = (this.audio_list[i].muted) ? 'muted' : '';
-
-					vol_el.innerHTML   = (this.audio_list[i].muted) ? 'muted' : this.round(this.mul_to_decibel(volume),1) + ' dB';
-					vol_el.className   = (this.audio_list[i].muted) ? 'muted' : '';
-
-					// update input_el
-					document.getElementById('audio_' + slug).value = volume;
-				}
+			for (let i = 0; i < this.audio_list.length; i++) {
+				this.audio_list[i].get_active();
 			}
-		}.bind(this), 300);
+		}.bind(this),500);
+		
 	}
 
-	get_volume (inSource) {
-		new MinimalRequest('/call/GetVolume', {'source': inSource}, function (response) {
-			if (response.status == 'ok') {
-				for (var i = 0; i < this.audio_list.length; i++) {
-					if (this.audio_list[i].name == response.name) {
-						this.audio_list[i]['volume'] = response.volume;
-						this.audio_list[i]['muted']  = response.muted;
+	on_scenes_changed (e) {
+		this.get_scene_list();
+	}
+
+	on_source_created (e) {
+		console.log('Created',e);
+		// if (e['sourceType'] == 'scene') {
+		// handled with ScenesChanged event	
+		// }
+		if (e['sourceType'] == 'input') {
+			// TODO if it has audio, handle it
+		}
+	}
+
+	on_source_destroyed (e) {
+		console.log('Destroyed',e);
+		if (e['sourceType'] == 'input') {
+			// TODO if it has audio, handle it
+		}
+	}
+
+	on_source_renamed (e) {
+		// console.log('Renamed',e);
+		if (e['sourceType'] == 'scene' && this.scenes[ e['previousName'] ]) {
+			this.scenes[ e['previousName'] ].change_name(e['newName']);
+			this.scenes[ e['newName'] ] = this.scenes[ e['previousName'] ];
+			delete this.scenes[ e['previousName'] ];
+		}
+	}
+
+	async transition () {
+		if (this.studio_mode) {
+			await obs.sendCommand('TransitionToProgram');
+		}
+	}
+
+	async update_audio_list () {
+		let response = await obs.sendCommand('GetSourcesList');
+		
+		if (response.status == 'ok' && response.sources) {
+			for (let i = 0; i < response['sources'].length; i++) {
+				let s = response['sources'][i];
+				
+				// type is 'scene' or 'input'
+				if (s.type == 'input' &&
+					(s.typeId == 'ffmpeg_source' || s.typeId == 'ndi_source' || s.typeId == 'coreaudio_input_capture' || s.typeId == 'ios-camera-source')
+				) {
+					let source_exists = false;
+					for (let j = 0; j < this.audio_list.length; j++) {
+						if (this.audio_list[j].name == s.name) {
+							source_exists = true;
+							break;
+						}
+					}
+
+					if (!source_exists) {
+						let sa = new SourceAudio(s);
+						this.audio_list.push(sa);
+						document.getElementById('audio_list').appendChild( sa.get_element() );
 					}
 				}
 			}
-		}.bind(this));
-	}
-
-	set_volume (inSource, inVolume) {
-		var vol = inVolume;
-		if (inVolume === undefined || isNaN(inVolume)) {
-			vol = parseFloat(document.getElementById('audio_' + this.slug(inSource)).value);
 		}
-
-		new MinimalRequest('/call/SetVolume', {'source': inSource, 'volume': vol}, function (response) {
-			if (response.status == 'ok') {
-				this.update_audio();
-			}
-		}.bind(this));
-
-		// update immediately for feedback
-		document.getElementById('audio_volume_' + this.slug(inSource)).innerHTML = this.round(this.mul_to_decibel(vol),1) + ' dB';
 	}
 
-	toggle_mute (inSource) {
-		new MinimalRequest('/call/ToggleMute', {'source': inSource}, function (response) {
-			if (response.status == 'ok') {
-				this.update_audio();
-			}
-		}.bind(this));
+	toggle_all_audio () {
+		// TODO for all active audio, toggle mute status (follow a global state?)
 	}
 
 	update_source_list () {
@@ -487,155 +584,73 @@ class OBSRemote {
 		}.bind(this), false);
 	}
 
-	set_text (inSource, inText) {
-		new MinimalRequest('/emit/SetTextFreetype2Properties', {'source': inSource, 'text': inText});
+	async set_text (inSource, inText) {
+		await obs.sendCommand('SetTextFreetype2Properties', {'source': inSource, 'text': inText});
 	}
 
-	update_status_list () {
-		new MinimalRequest('/call/GetStreamingStatus', {}, function (response) {
-			if (response.status == 'ok') {
-				document.getElementById('status_stream').className =
-					(response.streaming) ? 'status-item good' : 'status-item alert';
-				document.getElementById('status_stream_text').innerHTML =
-					(response.streaming) ? 'LIVE: ' + response['stream-timecode'].replace(/\.\d+/,'') : 'Stream inactive';
+	async update_status_list () {
+		let response = await obs.sendCommand('GetStreamingStatus');
 
-				if (response.recording) {
-					document.getElementById('status_recording').className =
-						(response['recording-paused']) ? 'status-item warning' : 'status-item good';
-					document.getElementById('status_recording_text').innerHTML =
-						(response['recording-paused']) ? 'Paused ' : 'REC ';
-					document.getElementById('status_recording_text').innerHTML += response['rec-timecode'].replace(/\.\d+/,'');
-				} else {
-					document.getElementById('status_recording').className = 'status-item alert';
-					document.getElementById('status_recording_text').innerHTML = 'Not recording';	
-				}
+		if (response.status == 'ok') {
+			document.getElementById('status_stream').classList.toggle('good',   response.streaming);
+			document.getElementById('status_stream').classList.toggle('alert', !response.streaming);
+			
+			document.getElementById('status_stream_text').innerHTML =
+				(response.streaming) ? 'LIVE: ' + response['stream-timecode'].replace(/\.\d+/,'') : 'Not streaming';
+
+			if (response.recording) {
+				document.getElementById('status_recording').classList.remove('alert');
+				document.getElementById('status_recording').classList.toggle('warning',  response['recording-paused']);
+				document.getElementById('status_recording').classList.toggle('good',    !response['recording-paused']);
+
+				document.getElementById('status_recording_text').innerHTML =
+					(response['recording-paused']) ? 'Paused ' : 'REC ';
+				document.getElementById('status_recording_text').innerHTML += response['rec-timecode'].replace(/\.\d+/,'');
+			} else {
+				document.getElementById('status_recording').classList.remove('warning');
+				document.getElementById('status_recording').classList.remove('good');
+				document.getElementById('status_recording').classList.add('alert');
+				document.getElementById('status_recording_text').innerHTML = 'Not recording';	
 			}
-		});
+		}
 		
-		new MinimalRequest('/call/GetStats', {}, function (response) {
-			if (response.status == 'ok') {
-				document.getElementById('status_cpu').className =
-					(response.stats['cpu-usage'] > 50) ? 'status-item warning' : 'status-item';
-				document.getElementById('status_cpu').innerHTML =
-					'CPU: ' + Math.ceil(response.stats['cpu-usage']) + '%';
+		let response2 = await obs.sendCommand('GetStats');
+		// use 'average-frame-time' // example 2.726 millis
 
-				let is_alert_state = (response.stats['output-skipped-frames'] / response.stats['output-total-frames'] > 0.05);
-				if (!is_alert_state) {
-					is_alert_state = (response.stats['fps'] < 30);
-				}
-				document.getElementById('status_frames').className = (is_alert_state) ? 'status-item alert' : 'status-item';
-				document.getElementById('status_frames').innerHTML =
-					Math.round(response.stats['fps']) + ' fps, '+ response.stats['output-skipped-frames'] + ' skipped';
+		if (response2.status == 'ok') {
+			document.getElementById('status_cpu').className =
+				(response2.stats['cpu-usage'] > 50) ? 'status-item warning' : 'status-item';
+			document.getElementById('status_cpu_text').innerHTML =
+				Math.ceil(response2.stats['cpu-usage']) + '%';
+
+			let is_alert_state = (response2.stats['output-skipped-frames'] / response2.stats['output-total-frames'] > 0.05);
+			if (!is_alert_state) {
+				is_alert_state = (response2.stats['fps'] < 30);
 			}
-		});
+			document.getElementById('status_frames').className = (is_alert_state) ? 'status-item alert' : 'status-item';
+			document.getElementById('status_frames_text').innerHTML =
+				Math.round(response2.stats['fps']) + ' fps, '+ response2.stats['output-skipped-frames'] + ' skipped';
+		}
 	}
 
 	update_status_clock () {
-		document.getElementById('status_clock').innerHTML = (new Date()).toLocaleTimeString('nl-NL');  // 24 hour format
+		this.clock_text.innerHTML = (new Date()).toLocaleTimeString('nl-NL');  // 24 hour format
+		this.clock.classList.toggle('alert', !obs.connected);
 	}
 
-	get_source_filters (inSource) {
-		new MinimalRequest('/call/GetSourceFilters', {'sourceName': inSource}, function (response) {
-			if (response.status == 'ok') {
-				var slug              = this.slug(inSource);
-				var source_filter_bar = document.getElementById('audio_' + slug + '_filter_bar');
+	update_checklist () {
+		let check_items   = document.getElementsByClassName('checklist-item'),
+			count_checked = 0;
 
-				for (var i = 0; i < response.filters.length; i++) {
-					var filter = response.filters[i];
-					// console.log(filter);
-
-					var create_filter = true;
-
-					var settings = {};
-
-					switch (filter.type) {
-						case 'noise_gate_filter':
-							settings['close_threshold'] = -32;  // [-96-0]  dB
-							settings['open_threshold']  = -26;  // [-96-0]  dB
-							settings['attack_time']     = 25;   // [1-500]  ms
-							settings['hold_time']       = 200;  // [1-1000] ms
-							settings['release_time']    = 150;  // [1-1000] ms
-							break;
-						case 'noise_suppress_filter_v2':
-							settings['method']         = 'rnnoise'; // speex|rnnoise
-							settings['suppress_level'] = -30;       // [-60-0] dB
-							break;
-						case 'limiter_filter':
-							settings['threshold']    = -6;  // [-60-0]  dB
-							settings['release_time'] = 60;  // [1-1000] ms
-							break;
-						case 'compressor_filter':
-							settings['ratio']         = 10;  // [1-32 in .5 steps]
-							settings['threshold']     = -18; // [-60-0]  dB
-							settings['attack_time']   = 6;   // [1-500]  ms
-							settings['release_time']  = 60;  // [1-1000] ms
-							settings['output_gain']   = 0;   // [-32-32] dB
-							break;
-						case 'expander_filter':
-							settings['ratio']         = 2;     // [1-20 in .1 steps]
-							settings['threshold']     = -40;   // [-60-0]  dB
-							settings['attack_time']   = 10;    // [1-100]  ms
-							settings['release_time']  = 50;    // [1-1000] ms
-							settings['output_gain']   = 0;     // [-32-32] dB
-							settings['detector']      = 'RMS'; // RMS|peak
-							settings['presets']       = 'Expander'; // Expander|Gate
-							break;
-						case 'gain_filter':
-							settings['db'] = 0;  // [-30-30] dB
-							break;
-						case 'vst_filter':
-							break;
-						case 'audio_monitor':
-							settings['volume']    = 100;   // [0-100] %
-							settings['locked']    = false; // [true|false]  Volume locked
-							settings['linked']    = false; // [true|false]  Volume linked to source volume
-							settings['mute']      = 0;     // [0-2] index: Not linked|Linked to deactivated from main view|Linked to source muting
-							settings['delay']     = 0;     // [0-] ms (in 100ms steps)
-							// device 'default' [string]
-							// deviceName 'Built-In Output' [string]
-							break;
-						default:
-							// do nothing for types not handled above
-							create_filter = false;
-							break;
-					}
-
-					// create_filter element
-					if (create_filter) {
-						// merge response settings with defaults generated above
-						//   any setting left to its default is not transmitted, hence the need to include defaults
-						for (let key in settings) {
-							if (filter.settings[key]) {
-								settings[key] = filter.settings[key];
-							}
-						}
-
-						let filter_instance = new SourceFilter(inSource, filter.name, filter.type, filter.enabled, settings);
-
-						source_filter_bar.appendChild( filter_instance.get_element() );
-					}
-				}
+		for (var i = 0; i < check_items.length; i++) {
+			if (check_items[i].checked) {
+				count_checked++;
 			}
-		}.bind(this));
-	}
-
-	update_on_interval () {
-		// clear timeout
-		window.clearTimeout(self.interval_timer);
-
-		this.get_studio_mode();
-		this.update_scenes();
-		this.update_audio();
-
-		if (this.studio_mode) {
-			this.set_source_screenshot(true);
 		}
-		this.set_source_screenshot(false);
 
-		this.update_status_list();
+		document.getElementById('status_checklist_text').innerHTML = count_checked + '/' + check_items.length;
 
-		// reset interval timeout
-		self.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+		document.getElementById('status_checklist').classList.toggle('good', count_checked == check_items.length);
 	}
 
 	handle_key_event (inEvent) {
@@ -646,25 +661,34 @@ class OBSRemote {
 			inEvent.preventDefault();
 		}
 
-		switch (inEvent.key) {
-			case 't':
+		switch (inEvent.keyCode) {
+			case 84: // t
 				this.transition();
 				break;
-			case 's':
+			case 83: // s
 				this.toggle_studio_mode();
 				break;
-			case '1':
-			case '2':
-			case '3':
-			case '4':
-			case '5':
-			case '6':
-			case '7':
-			case '8':
-			case '9':
-				var i = parseInt(inEvent.key,10) - 1;
+			case 77: // m
+				this.toggle_all_audio();
+				break;
+			case 70: // f
+				this.toggle_fullscreen();
+				break;
+			case 48: // 0
+			case 49: // 1
+			case 50: // 2
+			case 51:
+			case 52:
+			case 53:
+			case 54:
+			case 55:
+			case 56: // 8
+			case 57: // 9
+				// 0 is handled as 10th scene (with index - 1 = 9)
+				var i = (inEvent.keyCode == 48) ? 9 : inEvent.keyCode - 49;
+				
 				if (this.scene_list[i]) {
-					this.set_scene(this.scene_list[i].name);
+					this.scenes[ this.scene_list[i].name ].set_scene( inEvent.shiftKey );
 				}
 				break;
 			default:
@@ -673,61 +697,675 @@ class OBSRemote {
 
 		return false;
 	}
-
-	slug (inString) {
-		// using replaceAll is apparently too new (Safari 13+, Chrome 85+), so use replace with regex //global modifier
-		return inString.toLowerCase().replace(/\s/g, '_').replace(/\+/g,'_').replace(/\//g,'_');
-	}
-
-	mul_to_decibel (inMul) {
-		// assumption mul is in range [0,1], dB [-94.5,0]
-		return ((0.212 * Math.log10(inMul) + 1) * 94.5) - 94.5;
-	}
-
-	round (value, precision) {
-		let multiplier = Math.pow(10, precision || 0);
-		return Math.round(value * multiplier) / multiplier;
-	}
 }
 
-class SourceFilter {
-	constructor (inSource, inName, inType, inEnabled, inSettings) {
-		this.source      = inSource;
-		this.source_slug = inSource.toLowerCase().replace(/\s/g, '_').replace(/\+/g,'_').replace(/\//g,'_');
-		this.name        = inName;
-		this.type        = inType;
-		this.enabled     = inEnabled;
-		this.settings    = inSettings;
+class SourceScene {
+	constructor (index, name) {
+		this.index       = index;
+		this.name        = name;
+		this.last_update = 9999999; // improbably high number
+		this.is_program  = obsr.scene_program === name;
+		this.is_preview  = obsr.scene_preview === name;
 
-		this.el = Element.make('div', {
-			'id'       : 'source_' + this.source + '_filter_' + this.name,
-			'className': 'source-filter filter-' + this.type
-		});
-		if (!this.enabled) {
-			this.el.classList.add('muted');
-		}
-
-		var title = Element.make('h4', {
-			'innerHTML': this.name,
-			'events': {
-				'click': function (e) {
-					// store data
-					this.enabled = !this.enabled;
-
-					// update UI
-					if (this.enabled) {
-						e.target.parentElement.classList.remove('muted');
-					} else {
-						e.target.parentElement.classList.add('muted')
-					}
-
-					// request remote update
-					this.set_visibility();
+		// create elements
+		this.el          = Element.make('li', {
+			'id'       : 'li_scene_' + get_slug(name),
+			'className': 'scene',
+			'events'   : {
+				'click'      : function (e) {  // left click
+					console.log(e);
+					this.set_scene( e.shiftKey );
+				}.bind(this),
+				'contextmenu': function (e) {  // right click
+					e.preventDefault();
+					this.set_scene(true);
 				}.bind(this)
 			}
 		});
 
-		this.el.appendChild(title);
+		this.div = Element.make('div', {
+			'innerHTML': this._get_index_string()
+		})
+
+		this.label = Element.make('label', {
+			'innerHTML': name
+		});
+
+		this.el.appendChild(this.div);
+		this.el.appendChild(this.label);
+
+		// get initial state set up
+		this.set_screenshot();
+	}
+
+	update (tick) {
+		this.last_update = tick;
+
+		if (!this.interval_timer) {
+			this.update_state();
+		}
+	}
+
+	update_state () {
+		// add/remove class if is /not program
+		if (this.is_program) {
+			this.el.className = 'scene program';
+		} else if (this.is_preview) {
+			this.el.className = 'scene preview';
+		} else {
+			this.el.className = 'scene';
+
+			window.clearInterval(this.interval_timer);
+		}
+
+		if (this.is_program || this.is_preview) {
+			this.interval_timer = window.setInterval(this.set_screenshot.bind(this),  2000);
+		} else {
+			this.interval_timer = window.setInterval(this.set_screenshot.bind(this), 10000);
+		}
+	}
+
+	pause_update () {
+		if (this.interval_timer)
+			window.clearInterval(this.interval_timer);
+	}
+
+	set_program () {
+		this.is_program = true;
+		this.update_state();
+	}
+
+	set_preview () {
+		this.is_preview = true;
+		this.update_state();
+	}
+
+	unset_program () {
+		this.is_program = false;
+		this.update_state();
+	}
+
+	unset_preview () {
+		this.is_preview = false;
+		this.update_state();
+	}
+
+	change_index (index) {
+		if (index != this.index) {
+			this.index = index;
+			this.div.innerHTML = this._get_index_string();
+		}
+	}
+
+	change_name (name) {
+		this.name = name;
+		this.label.innerHTML = name;
+	}
+
+	async set_scene (forceCurrentScene) {
+		let cmd = (obsr.studio_mode) ? 'SetPreviewScene' : 'SetCurrentScene';
+		
+		if (forceCurrentScene) {
+			cmd = 'SetCurrentScene';
+		}
+
+		await obs.sendCommand(cmd, {'scene-name': this.name});
+	}
+
+	async set_screenshot () {
+		let img_width  = (this.el.offsetWidth > 0) ? this.el.offsetWidth : 250;
+		let img_height = (1 / (1920/1080)) * img_width; // TODO improve ratio based on current scene data
+
+		let response = await obs.sendCommand('TakeSourceScreenshot', {
+			'sourceName': this.name,
+			'embedPictureFormat': 'jpg',
+			'width': img_width,
+			'height': img_height
+		});
+
+		if (response && response.status == 'ok' && response.img) {
+			// apply image but with preload dummy image object as interstage to eliminate 'refresh flickering'
+
+			// create a new Image object as dummy holder to trigger a preload of the image
+			let img_dummy = new Image();
+
+			// when preload is complete, apply the image to the element
+			img_dummy.onload = function () {
+				this.el.style.backgroundImage = 'url("' + response.img + '")';
+			}.bind(this)
+
+			// setting 'src' actually starts the preload
+			img_dummy.src = response.img;
+		}
+	}
+
+	_get_index_string () {
+		if (this.index < 9) {
+			return this.index + 1;
+		}
+		else if (this.index == 9) {
+			return 0;
+		}
+		// else
+		return '-';
+	}
+}
+
+class SourceAudio {
+	constructor (inSource) {
+		this.source      = inSource;
+		this.name        = inSource.name;
+		this.slug        = get_slug(inSource.name);
+		this.typeId      = inSource.typeId;
+		this.volume      = 0;
+		this.volume_db   = 0;
+		this.volume_max  = 0;
+		this.muted       = true;
+		this.active      = false;
+		this.visible     = false;
+		this.tracks      = [];
+		this.filters     = [];
+		this.last_update = 9999999; // improbably high number
+
+		// create elements
+		this.el                = Element.make('li',     {'className': 'audio-item', 'id': 'audio_item_' + this.slug});
+		this.name_el           = Element.make('div',    {'className': 'audio-name', 'innerHTML': this.name});
+		this.settings_el       = Element.make('div',    {'className': 'audio-settings'});
+		this.column_vu_el      = Element.make('div',    {'className': 'audio-column-vu'});
+		this.vol_max_el        = Element.make('div',    {
+			'className': 'audio-max',
+			'title'    : 'Max output volume (click to reset)',
+			'innerHTML': 'dB'
+		});
+		this.vol_canvas        = Element.make('canvas', {'className': 'audio-vu'});
+		this.column_fader_el   = Element.make('div',    {'className': 'audio-column-fader'});
+		this.vol_el            = Element.make('div',    {
+			'className': 'audio-current',
+			'title'    : 'Current volume setting',
+			'innerHTML': 'dB'
+		});
+		this.fader             = new Fader(this.slug + '_fader');
+		this.fader.get_element().addEventListener('change', this.on_fader_change.bind(this));
+		this.column_buttons_el = Element.make('div',    {'className': 'audio-column-buttons'});
+		if (this.typeId != 'coreaudio_input_capture') {
+			this.btn_visibility    = Element.make('button', {
+				'className': 'audio-button visibility',
+				'title'    : 'Toggle visibility',
+				// 'innerHTML': '<img class="visible-on" src="icons/eye.svg"><img class="visible-off" src="icons/eye-off.svg">',
+				'innerHTML': '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="visible-on"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="visible-off"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>',
+				'events': {
+					'click': this.on_visibility_btn_click.bind(this)
+				}
+			});
+		}
+		
+		this.btn_mute          = Element.make('button', {
+			'className': 'audio-button mute',
+			'title'    : 'Toggle mute',
+			'innerHTML': '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-on"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-off"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-1"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
+			'events': {
+				'click': this.on_mute_btn_click.bind(this)
+			}
+		});
+		this.btn_solo          = Element.make('button', {
+			'className': 'audio-button solo',
+			'title'    : 'Toggle solo',
+			'innerHTML': 'S',
+			'events': {
+				'click': this.on_solo_btn_click.bind(this)
+			}
+		});
+		this.btn_monitor       = Element.make('button', {
+			'className': 'audio-button',
+			'innerHTML': 'X',
+			'events': {
+				'click': this.on_monitor_btn_click.bind(this)
+			}
+		});
+		this.tracks_el         = Element.make('div',    {'className': 'audio-tracks'});
+		this.filters_list_el   = Element.make('ul',     {'className': 'filters-list'});
+
+		this.el.appendChild(this.name_el);
+		this.el.appendChild(this.settings_el);
+		this.el.appendChild(this.filters_list_el);
+
+		this.settings_el.appendChild(this.column_vu_el);
+		this.settings_el.appendChild(this.column_fader_el);
+		this.settings_el.appendChild(this.column_buttons_el);
+
+		this.column_vu_el.appendChild(this.vol_max_el);
+		this.column_vu_el.appendChild(this.vol_canvas);
+
+		this.column_fader_el.appendChild(this.vol_el);
+		this.column_fader_el.appendChild(this.fader.get_element());
+
+		this.column_buttons_el.appendChild(this.btn_mute);
+		if (this.typeId != 'coreaudio_input_capture') {
+			this.column_buttons_el.appendChild(this.btn_visibility);
+		}
+		// this.column_buttons_el.appendChild(this.btn_solo);
+		// this.column_buttons_el.appendChild(this.btn_monitor);
+		this.column_buttons_el.appendChild(this.tracks_el);
+
+		for (let i = 1; i < 7; i++) {
+			let t = Element.make('span', {
+				'data-track': i,
+				'title'     : 'Track ' + i,
+				'events'    : {
+					'click': this.on_track_btn_click.bind(this,i)
+				}
+			});
+			this.tracks.push(t);
+			this.tracks_el.appendChild(t);
+		}
+		
+		// set initial state
+		this.update_state();
+
+		this.get_volume();
+		if (this.typeId != 'coreaudio_input_capture') {
+			this.get_visibility();
+		}
+		this.get_active();
+		this.get_tracks();
+		this.get_source_filters();
+
+		// handle relevant events
+		obs.on('SourceVolumeChanged',    this.on_volume_changed.bind(this));
+		obs.on('SourceMuteStateChanged', this.on_mute_state_changed.bind(this));
+		obs.on('SourceAudioActivated',   (e) => {console.log(e, e['sourceName']);});
+		obs.on('SourceAudioDeactivated', (e) => {console.log(e, e['sourceName']);});
+		
+		//SourceAudioMixersChanged -> (see protocol)
+
+		//SourceCreated + SourceDestroyed (handle externally?)
+		obs.on('SourceRenamed',          this.on_source_renamed.bind(this));
+
+		obs.on('SceneItemVisibilityChanged', this.on_visibility_changed.bind(this));
+
+		obs.on('SourceFilterAdded',      this.on_filter_added.bind(this));
+		obs.on('SourceFilterRemoved',    this.on_filter_removed.bind(this));
+		obs.on('SourceFiltersReordered', this.on_filters_reordered.bind(this));
+		
+		//SourceFilterVisibilityChanged -> sourceName, filterName, filterEnabled
+	}
+
+	get_element () {
+		return this.el;
+	}
+
+	on_source_renamed (e) {
+		if (e['previousName'] == this.name) {
+			this.change_name( e['newName'] );
+		}
+	}
+
+	change_name (name) {
+		if (name) {
+			this.source.name       = name;
+			this.name              = name;
+			this.name_el.innerHTML = name;
+			this.slug              = get_slug(name);
+			// TODO update li id?
+		}
+	}
+
+	update (tick) {
+		this.last_update = tick;
+
+		if (!this.interval_timer) {
+			this.update_state();
+		}
+	}
+
+	update_state () {
+		// main element
+		this.el.classList.toggle('active',  this.active);
+		this.el.classList.toggle('muted',   this.muted);
+		this.el.classList.toggle('visible', this.visible);
+
+		// volume
+		// NOT USED YET this.vol_max_el.innerHTML = (round(mul_to_decibel(this.volume_max), 1) + ' dB').replace('Infinity','∞');
+		this.vol_el.innerHTML     = (round(mul_to_decibel(this.volume),     1) + ' dB').replace('Infinity','∞');
+		this.btn_mute.classList.toggle('volume-low',  this.volume  < 0.33);
+		this.btn_mute.classList.toggle('volume-mid',  (this.volume >=0.33 && this.volume < 0.66));
+		this.btn_mute.classList.toggle('volume-high', this.volume >= 0.66);
+		this.fader.set(this.volume);
+		// TODO update canvas if data is available
+
+		// buttons
+		// this.btn_mute.classList.toggle()
+		// this.btn_solo.classList.toggle()
+
+		// track buttons
+
+		// adjust timer if necessary?
+	}
+
+	pause_update () {
+		if (this.interval_timer)
+			window.clearInterval(this.interval_timer);
+	}
+
+	async get_volume () {
+		let response = await obs.sendCommand('GetVolume', {'source': this.name});
+		
+		if (response.status == 'ok') {
+			this.volume = response.volume;
+			this.muted  = response.muted;
+
+			this.update_state();
+		}
+	}
+
+	set_volume () {
+		obs.sendCommand('SetVolume', {'source': this.name, 'volume': this.volume});
+		
+		// this.update_state();
+	}
+
+	on_volume_changed (e) {
+		if (e['sourceName'] == this.name) {
+			this.volume    = e.volume;
+			this.volume_db = e.volumeDb;
+
+			this.update_state();
+		}
+	}
+
+	set_mute () {
+		obs.sendCommand('SetMute', {'source': this.name, 'mute': this.muted});
+	}
+
+	async toggle_mute () {
+		await obs.sendCommand('ToggleMute', {'source': this.name});
+
+		// this.update_state();
+	}
+
+	on_mute_state_changed (e) {
+		if (e['sourceName'] == this.name) {
+			this.muted = e.muted;
+
+			this.update_state();
+		}
+	}
+
+	async get_visibility () {
+		// omitted: 'scene-name': scene, 
+		let response = await obs.sendCommand('GetSceneItemProperties', {'item': this.name});
+
+		if (response && response.status == 'ok') {
+			this.visible = response['visible'];
+
+			this.update_state();
+		}
+	}
+
+	set_visibility (state) {
+		// omitted: 'scene-name': scene, 
+		obs.sendCommand('SetSceneItemRender', {'source': this.name, 'render': state});
+	}
+
+	on_visibility_changed (e) {
+		if (e['item-name'] == this.name) {
+			this.visible = e['item-visible'];
+
+			this.update_state();
+		}
+	}
+
+	async get_active () {
+		// TODO GetAudioActive is not the same as active in scene
+		// audioActive is true even if not in program scene, but false when muted or not playing
+		let response_s =  await obs.sendCommand('GetSourceActive', {'sourceName': this.name});
+		let response_a =  await obs.sendCommand('GetAudioActive',  {'sourceName': this.name});
+
+		if (response_s && response_s.status == 'ok' && response_a && response_a.status == 'ok') {
+			this.active = (response_s.sourceActive && response_a.audioActive);
+
+			this.update_state();
+		}
+	}
+
+	async get_tracks () {
+		let response =  await obs.sendCommand('GetAudioTracks', {'sourceName': this.name});
+
+		if (response && response.status == 'ok') {
+			for (let i = 1; i < 7; i++) {
+				this.tracks[i-1].className = response['track'+i] ? 'enabled': '';
+			}
+		}
+	}
+
+	async set_track (track_index, state) {
+		let response = await obs.sendCommand('SetAudioTracks', {'sourceName': this.name, 'track': track_index, 'active': state});
+
+		if (response && response.status == 'ok') {
+			this.tracks[track_index-1].classList.toggle('enabled', state);
+		}
+	}
+
+	on_fader_change (e) {
+		this.volume           = this.fader.value;
+		// immediate feedback
+		this.vol_el.innerHTML = (round(mul_to_decibel(this.volume), 1) + ' dB').replace('Infinity','∞');
+		// update volume in OBS
+		this.set_volume()
+	}
+
+	on_visibility_btn_click (e) {
+		this.visible = !this.visible;
+
+		// immediate feedback
+		this.update_state();
+
+		// update OBS
+		this.set_visibility(this.visible);
+	}
+
+	on_mute_btn_click (e) {
+		this.muted = !this.muted;
+		
+		// immediate feedback
+		this.update_state();
+		
+		// update OBS
+		this.set_mute();
+	}
+
+	on_solo_btn_click (e) {
+		//TODO
+		console.log(this.name, 'solo clicked');
+	}
+
+	on_monitor_btn_click (e) {
+		//TODO
+		console.log(this.name, 'monitor clicked');
+	}
+
+	on_track_btn_click (track_index, e) {
+		this.set_track(track_index, !this.tracks[track_index-1].classList.contains('enabled'));
+	}
+
+	async get_source_filters (inSource) {
+		let response = await obs.sendCommand('GetSourceFilters', {'sourceName': this.name});
+		
+		if (response && response.status == 'ok') {
+			for (var i = 0; i < response.filters.length; i++) {
+				// create filter if it's of the right type
+				switch (response.filters[i].type) {
+					case 'noise_gate_filter':
+					case 'noise_suppress_filter_v2':
+					case 'limiter_filter':
+					case 'compressor_filter':
+					case 'expander_filter':
+					case 'gain_filter':
+					case 'async_delay_filter':
+					case 'audio_monitor':
+					case 'ndi_audiofilter':
+					case 'vst_filter':
+					case 'invert_polarity_filter': {
+						let filter_instance = new SourceFilter(this.source, response.filters[i]);
+
+						this.filters.push(filter_instance);
+						this.filters_list_el.appendChild( filter_instance.get_element() );
+						break;
+					}
+					default:  // do nothing for types not handled above
+						break;
+				}
+			}
+		}
+	}
+
+	on_filter_added (e) {
+		// TODO
+		//SourceFilterAdded -> sourceName, filterName, filterType, filterSettings
+		console.log(e);
+	}
+
+	on_filter_removed (e) {
+		// TODO
+		//SourceFilterRemoved -> sourceName, filterName, filterType
+		console.log(e);
+	}
+
+	on_filters_reordered (e) {
+		// TODO
+		//SourceFiltersReordered -> (see protocol)
+		console.log(e);
+	}
+}
+
+class SourceFilter {
+	constructor (inSource, inFilter) {
+		this.source      = inSource;
+		this.source_slug = get_slug(inSource.name);
+		this.filter      = inFilter;
+		this.name        = this.filter.name;
+		this.type        = this.filter.type;
+		this.enabled     = this.filter.enabled;
+		this.open        = false;
+		this.settings    = {};
+
+		this.el = Element.make('div', {
+			'id'       : 'source_' + this.source_slug + '_filter_' + this.name,
+			'className': 'source-filter filter-' + this.type
+		});
+		if (!this.enabled) {
+			this.el.classList.add('disabled');
+		}
+		if (this.open) {
+			this.el.classList.add('open');
+		}
+
+		this.title_el = Element.make('label', {
+			'className': 'source-title'
+		});
+		this.el.appendChild(this.title_el);
+
+		this.title_span = Element.make('span', {
+			'title'    : this.name,
+			'innerHTML': this.name,
+			'events'   : {
+				'click': this.toggle_open.bind(this)
+			}
+		});
+		this.title_el.appendChild(this.title_span);
+
+		// enable button
+		this.btn_enable = Element.make('span', {
+			'title'    : 'Toggle filter visibility',
+			'innerHTML': '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="visible-on"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="visible-off"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>',
+			'className': 'button',
+			'events'   : {
+				'click': this.toggle_enable.bind(this)
+			}
+		});
+		this.title_el.appendChild(this.btn_enable);
+
+		// open button
+		this.btn_open = Element.make('span', {
+			'title'    : 'Toggle filter settings pane',
+			'innerHTML': '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="chevron-up"><polyline points="18 15 12 9 6 15"></polyline></svg>',
+			'className': 'button',
+			'events'   : {
+				'click': this.toggle_open.bind(this)
+			}
+		});
+		this.title_el.appendChild(this.btn_open);
+
+		this.settings_el = Element.make('div', {
+			'className': 'filter-settings-section'
+		});
+		this.el.appendChild(this.settings_el);
+
+		// create default settings
+		switch (this.type) {
+			case 'noise_gate_filter':
+				this.settings['close_threshold'] = -32;  // [-96-0]  dB
+				this.settings['open_threshold']  = -26;  // [-96-0]  dB
+				this.settings['attack_time']     = 25;   // [1-500]  ms
+				this.settings['hold_time']       = 200;  // [1-1000] ms
+				this.settings['release_time']    = 150;  // [1-1000] ms
+				break;
+			case 'noise_suppress_filter_v2':
+				this.settings['method']          = 'rnnoise'; // speex|rnnoise
+				this.settings['suppress_level']  = -30;       // [-60-0] dB
+				break;
+			case 'limiter_filter':
+				this.settings['threshold']       = -6;  // [-60-0]  dB
+				this.settings['release_time']    = 60;  // [1-1000] ms
+				break;
+			case 'compressor_filter':
+				this.settings['ratio']           = 10;  // [1-32 in .5 steps]
+				this.settings['threshold']       = -18; // [-60-0]  dB
+				this.settings['attack_time']     = 6;   // [1-500]  ms
+				this.settings['release_time']    = 60;  // [1-1000] ms
+				this.settings['output_gain']     = 0;   // [-32-32] dB
+				break;
+			case 'expander_filter':
+				this.settings['ratio']           = 2;     // [1-20 in .1 steps]
+				this.settings['threshold']       = -40;   // [-60-0]  dB
+				this.settings['attack_time']     = 10;    // [1-100]  ms
+				this.settings['release_time']    = 50;    // [1-1000] ms
+				this.settings['output_gain']     = 0;     // [-32-32] dB
+				this.settings['detector']        = 'RMS'; // RMS|peak
+				this.settings['presets']         = 'Expander'; // Expander|Gate
+				break;
+			case 'gain_filter':
+				this.settings['db']              = 0;  // [-30-30] dB
+				break;
+			case 'async_delay_filter':
+				this.settings['delay_ms']        = 0;     // [0-?] ms
+				break;
+			case 'audio_monitor':
+				this.settings['volume']          = 100;   // [0-100] %
+				this.settings['locked']          = false; // [true|false]  Volume locked
+				this.settings['linked']          = false; // [true|false]  Volume linked to source volume
+				this.settings['mute']            = 0;     // [0-2] index: Not linked|Linked to deactivated from main view|Linked to source muting
+				this.settings['delay']           = 0;     // [0-] ms (in 100ms steps)
+				// device 'default' [string]
+				// deviceName 'Built-In Output' [string]
+				break;
+			case 'ndi_audiofilter':
+				this.settings['ndi_filter_ndiname'] = 'Dedicated NDI Audio output'
+				break;
+			case 'vst_filter':
+			case 'invert_polarity_filter':
+			default:
+				// no settings reecorded for these
+				break;
+		}
+
+		// merge actual settings with defaults generated above
+		//   any setting left to its default is not transmitted, hence the need to include defaults above
+		for (let key in this.settings) {
+			if (this.filter.settings[key]) {
+				this.settings[key] = this.filter.settings[key];
+			}
+		}
 
 		// create inputs
 		for (var key in this.settings) {
@@ -790,6 +1428,9 @@ class SourceFilter {
 					max  = 2000;
 					step = 50;
 					break;
+				case 'delay_ms':
+					max = 500; // can go higher
+					break;
 				case 'detector':
 					unit    = '';
 					format  = 'select';
@@ -828,6 +1469,11 @@ class SourceFilter {
 					options = [false,true];
 					labels  = ['Independent','Linked to source'];
 					break;
+				case 'ndi_filter_ndiname':
+					unit   = '';
+					format = 'string';
+					label  = 'ndi_output_name'
+					break;
 				default:
 					step = 'any';
 					break;
@@ -843,17 +1489,24 @@ class SourceFilter {
 				'className': 'filter-setting-label'
 			});
 
-			var unit_el = undefined;
-
 			var input_el = undefined;
 
-			if (format == 'number' || format == 'string') {
-				unit_el = Element.make('span', {
-					'id'       : 'filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key + '_unit_label',
-					'innerHTML': v + ' ' + unit,
-					'className': 'filter-setting-unit'
-				});
+			if (format == 'number') {
+				input_el = new Slider('filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key + '_unit_label',min,max,step,unit,label);
+				input_el.set(v);
 
+				input_el = input_el.get_element();
+
+				input_el.addEventListener('change', (e) =>  {
+					// update in internal data if changed
+					if (this.settings[e.setting] != e.value) {
+						this.settings[e.setting] = e.value;
+
+						// request remote update
+						this.set_filter_setting(e.setting, e.value);
+					}
+				});
+			} else if (format == 'string') {
 				input_el = Element.make('input', {
 					'id'              : 'filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key,
 					'name'            : 'filter-' + this.source_slug + '-type-' + this.type + '-setting-' + key,
@@ -870,19 +1523,11 @@ class SourceFilter {
 					'data-format'     : format,
 					'events'          : {
 						'input': function (e) {
-							var val = e.target.value;
-							if (e.target.getAttribute('data-format') === 'number') {
-								val = parseFloat(val);
-							}
-
 							// update in internal data
-							this.settings[ e.target.getAttribute('data-setting') ] = val;
-
-							// set unit label to input's current value
-							document.getElementById(e.target.id + '_unit_label').innerHTML = val + ' ' + e.target.getAttribute('data-unit');
+							this.settings[ e.target.getAttribute('data-setting') ] = e.target.value;
 
 							// request remote update
-							this.set_filter_setting(e.target.getAttribute('data-setting'), val)
+							this.set_filter_setting(e.target.getAttribute('data-setting'), e.target.value)
 						}.bind(this)
 					}
 				});
@@ -929,14 +1574,11 @@ class SourceFilter {
 				input_el.selectedIndex = selectedIndex;
 			}
 
-			if (unit_el) {
-				label_el.appendChild(unit_el);
-			}
-
-			s_el.appendChild(label_el);
+			if (format != 'number')
+				s_el.appendChild(label_el);
 			s_el.appendChild(input_el);
 
-			this.el.appendChild(s_el);
+			this.settings_el.appendChild(s_el);
 		}
 	}
 
@@ -944,108 +1586,499 @@ class SourceFilter {
 		return this.el;
 	}
 
-	get_filter_settings (inSource, inFilter) {
-		new MinimalRequest('/call/GetSourceFilterInfo', {'sourceName': inSource, 'filterName': inFilter}, function (response) {
-			if (response.status == 'ok') {
-				// merge settings with what's stored
-				// for each variable, overwrite
-				// trigger visual refresh
-			}
-		});
+	change_name (name) {
+		if (name) {
+			this.name               = name;
+			this.title_el.innerHTML = name;
+		}
 	}
 
-	set_visibility () {
-		new MinimalRequest('/call/SetSourceFilterVisibility', {'sourceName': this.source, 'filterName': this.name, 'filterEnabled': this.enabled});
+	async get_filter_settings (inSource, inFilter) {
+		let response = await obs.sendCommand('GetSourceFilterInfo', {'sourceName': this.source.name, 'filterName': inFilter});
+		
+		if (response && response.status == 'ok') {
+			// merge settings with what's stored
+			// for each variable, overwrite
+			// trigger visual refresh
+		}
 	}
 
-	set_filter_setting (inSetting, inValue) {
+	toggle_open (e) {
+		// store data
+		this.open = !this.open;
+
+		// update UI
+		this.el.classList.toggle('open', this.open);
+	}
+
+	toggle_enable (e) {
+		// store data
+		this.enabled = !this.enabled;
+
+		// update UI
+		this.el.classList.toggle('disabled', !this.enabled);
+
+		// request remote update
+		this.set_visibility();
+	}
+
+	async set_visibility () {
+		await obs.sendCommand('SetSourceFilterVisibility', {'sourceName': this.source.name, 'filterName': this.name, 'filterEnabled': this.enabled});
+	}
+
+	async set_filter_setting (inSetting, inValue) {
 		var key_value_pair = {};
 		key_value_pair[inSetting] = inValue;
 
-		new MinimalRequest('/call/SetSourceFilterSettings', {'sourceName': this.source, 'filterName': this.name, 'filterSettings': key_value_pair});
+		await obs.sendCommand('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair});
 	}
 }
 
 /** TODO
- * currently uses mic input -> better to be source input
  * canvas width is inflexible; would setting width flexibly still work?
  * perhaps use a historical graph with points/lines rather than just actual?
  * convert to decibels? (requires the mul_to_db function to work properly and be generalised)
  * make this into a proper modern Class (and remove from old code)
  */
 class VUMeter {
-	constructor () {
+	constructor (canvas) {
 		// see: https://codepen.io/travisholliday/pen/gyaJk
 
-		// first, create canvas element
-		var canvas = Element.make('canvas', {
-			'id'    : 'audio_canvas',
-			'width' : '670px',
-			'height': '37px'
-		})
-		document.getElementById('audio_list').appendChild(canvas);
+		this.canvas = canvas;
 
-		navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+		var canvasContext = canvas.getContext('2d');
 
-		if (navigator.getUserMedia) {
-			navigator.getUserMedia(
-				{
-					audio: true
-				},
-				function (stream) {
-					var audioContext   = new AudioContext();
-					var analyser       = audioContext.createAnalyser();
-					var microphone     = audioContext.createMediaStreamSource(stream);
-					var javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+		var max_width  = canvas.offsetWidth;
 
-					analyser.smoothingTimeConstant = 0.8;
-					analyser.fftSize = 1024;
-
-					microphone.connect(analyser);
-					analyser.connect(javascriptNode);
-					javascriptNode.connect(audioContext.destination);
-
-					// var canvas        = document.getElementById('audio_canvas');
-					var canvasContext = canvas.getContext('2d');
-
-					javascriptNode.onaudioprocess = function () {
-						var array = new Uint8Array(analyser.frequencyBinCount);
-						analyser.getByteFrequencyData(array);
-						var values = 0;
-
-						var length = array.length;
-						for (var i = 0; i < length; i++) {
-							values += array[i];
-						}
-
-						var average    = values / length;
-						var avg_scaled = (average / 180);  // 2nd var is a known maximum
-					
-						var max_width  = canvas.offsetWidth;
-
-						// console.log(average, avg_scaled, max_width, avg_scaled*max_width);
-						
-						canvasContext.clearRect(0, 0, max_width, 37);
-						canvasContext.fillStyle = "#BadA55";
-						if (avg_scaled > 0.7) {
-							canvasContext.fillStyle = "#eada56";
-						} else if (avg_scaled > 0.85) {
-							canvasContext.fillStyle = "#fd3b00";
-						}
-						canvasContext.fillRect(0, 0, avg_scaled * max_width, 37);
-						// draw text on top
-						// canvasContext.fillStyle = "#262626";
-						// canvasContext.font      = "48px impact";
-						// canvasContext.fillText(Math.round(average - 40), -2, 300);
-					}; // end fn stream
-				},
-				function (err) {
-					console.log('The following error occured: ' + err.name);
-				}
-			)
-		} else {
-			console.log('getUserMedia not supported');
+		canvasContext.clearRect(0, 0, max_width, 37);
+		canvasContext.fillStyle = "#BadA55";
+		if (avg_scaled > 0.7) {
+			canvasContext.fillStyle = "#eada56";
+		} else if (avg_scaled > 0.85) {
+			canvasContext.fillStyle = "#fd3b00";
 		}
+		canvasContext.fillRect(0, 0, avg_scaled * max_width, 37);
+	}
+}
+
+class Fader {
+	constructor (element, min, max, step, unit, label) {
+		this.el           = element;
+		this.value        = 0;
+		this.value_db     = 0
+		this.value_scaled = 0;
+		this.min          = (min != undefined) ? min : 0;
+		this.max          = (max != undefined) ? max : 1;
+		this.step         = step || .001;
+		this.unit         = unit || '';
+		this.label        = label || '';
+		this.active       = false;
+
+		if (typeof this.el == 'string') {
+			this.el = document.getElementById(this.el);
+
+			if (!this.el) {
+				this.el = Element.make('fader', {
+					'id': element
+				});
+			}
+		}
+
+		this.inner_el = Element.make('div', {
+			'className': 'fader-inner'
+		});
+
+		this.el.appendChild(this.inner_el);
+
+		this.set(this.value, false);
+
+		this.el.addEventListener('mousedown',   this.on_down.bind(this));
+		this.el.addEventListener('touchdown',   this.on_down.bind(this));
+		window.addEventListener( 'mousemove',   this.on_move.bind(this));
+		window.addEventListener( 'touchmove',   this.on_move.bind(this));
+		window.addEventListener( 'mouseup',     this.on_up.bind(this));
+		window.addEventListener( 'touchup',     this.on_up.bind(this));
+		window.addEventListener( 'touchcancel', this.on_up.bind(this));
+	}
+
+	get_element () {
+		return this.el;
+	}
+
+	on_down (e) {
+		e.preventDefault();
+		this.active = true;
+		this.el.classList.add('active');
+	}
+
+	on_move (e) {
+		if (this.active) {
+			e.preventDefault();
+
+			// ensure we capture either mouse.y or touch.y value
+			let y = e.layerY;
+			if (!y && e.touches && e.touches[0]) {
+				y = e.touches[0].layerY;
+			}
+
+			let loc_y = y - this.el.offsetTop;
+			let pct_y = Math.min(Math.max(1 - (loc_y / this.el.clientHeight), 0), 1);
+
+			console.log(y,loc_y,pct_y,this.el.offsetTop,this.el.clientHeight,e);
+
+			let value = round(pct_y,2);
+
+			if (value != this.value) {
+				this.set(value, false);
+				this.generate_event();
+			}
+		}
+	}
+
+	on_up (e) {
+		if (this.active) {
+			this.active = false;
+			this.el.classList.remove('active');
+			e.preventDefault();
+		}
+	}
+
+	generate_event () {
+		let evt     = new Event('change');
+		evt.value   = this.value_scaled;
+		evt.valueDb = this.value_db;
+		evt.setting = this.label;
+
+		this.el.dispatchEvent(evt);
+	}
+
+	set (value, is_scaled = true) {
+		// if (value != undefined)
+		// 	this.value = value;
+		
+		if (value !=undefined && !is_scaled) {
+			this.value        = value;
+			
+			this.value_scaled = (value * (this.max - this.min)) + this.min;
+			
+			if (this.step >= 1) {
+				this.value_scaled = Math.round(this.value_scaled / this.step) * this.step;
+			} else {
+				let round_factor = 1;
+				
+				if (this.step == .01) {
+					round_factor = 2;
+				} else if (this.step == .001) {
+					round_factor = 3;
+				}
+
+				this.value_scaled = round(this.value_scaled, round_factor);
+			}
+		} else if (value != undefined && is_scaled) {
+			this.value        = (value - this.min) / (this.max - this.min);
+			this.value_scaled = value;
+		}
+
+		this.value_db = round(mul_to_decibel(this.value),2);
+		
+		// set styles
+		this.inner_el.style.height = this.value * 100 + '%';
+		
+		//set attributes
+		this.el.setAttribute('value',             this.value);
+		this.el.setAttribute('data-db',           this.value_db);
+		this.el.setAttribute('data-value-scaled', this.value_scaled);
+		this.el.setAttribute('data-value-unit',   this.value_scaled + ' ' + this.unit);
+	}
+}
+
+class Slider {
+	constructor (element, min, max, step, unit, label) {
+		this.el           = element;
+		this.value        = 0;
+		this.value_scaled = 0;
+		this.min          = (min != undefined) ? min : 0;
+		this.max          = (max != undefined) ? max : 1;
+		this.step         = step || .001;
+		this.unit         = unit || '';
+		this.label        = label || '';
+		this.active       = false;
+
+		if (typeof this.el == 'string') {
+			this.el = document.getElementById(this.el);
+
+			if (!this.el) {
+				this.el = Element.make('slider', {
+					'id': element
+				});
+			}
+		}
+		this.el.setAttribute('data-setting', this.label);
+		this.el.setAttribute('data-label',   this.label);
+		
+		this.inner_el = Element.make('div', {
+			'className': 'slider-inner'
+		});
+
+		this.el.appendChild(this.inner_el);
+
+		this.set(this.value, false);
+
+		this.el.addEventListener('mousedown',  this.on_down.bind(this));
+		this.el.addEventListener('touchstart', this.on_down.bind(this));
+		window.addEventListener('mousemove',   this.on_move.bind(this));
+		window.addEventListener('touchmove',   this.on_move.bind(this));
+		window.addEventListener('mouseup',     this.on_up.bind(this));
+		window.addEventListener('touchend',    this.on_up.bind(this));
+		window.addEventListener('touchcancel', this.on_up.bind(this));
+	}
+
+	get_element () {
+		return this.el;
+	}
+
+	on_down (e) {
+		e.preventDefault();
+		this.active = true;
+		this.el.classList.add('active');
+	}
+
+	on_move (e) {
+		if (this.active) {
+			e.preventDefault();
+
+			// ensure we capture either mouse.x or touch.x value
+			let x = e.x;
+			if (!x && e.touches && e.touches[0]) {
+				x = e.touches[0].clientX;
+			}
+
+			let loc_x = x - this.el.offsetLeft;
+			let pct_x = Math.min(Math.max(loc_x / this.el.clientWidth, 0), 1);
+
+			let value = round(pct_x, 3);
+
+			if (value != this.value) {
+				this.set(value, false);
+				this.generate_event();
+			}
+		}
+	}
+
+	on_up (e) {
+		if (this.active) {
+			this.active = false;
+			this.el.classList.remove('active');
+			e.preventDefault();
+		}
+	}
+
+	generate_event () {
+		let evt     = new Event('change');
+		evt.value   = this.value_scaled;
+		evt.setting = this.label;
+
+		this.el.dispatchEvent(evt);
+	}
+
+	set (value, is_scaled = true) {
+		if (value !=undefined && !is_scaled) {
+			this.value        = value;
+			
+			this.value_scaled = (value * (this.max - this.min)) + this.min;
+			
+			if (this.step >= 1) {
+				this.value_scaled = Math.round(this.value_scaled / this.step) * this.step;
+			} else {
+				let round_factor = 1;
+				
+				if (this.step == .01) {
+					round_factor = 2;
+				} else if (this.step == .001) {
+					round_factor = 3;
+				}
+
+				this.value_scaled = round(this.value_scaled, round_factor);
+			}
+		} else if (value != undefined && is_scaled) {
+			this.value        = (value - this.min) / (this.max - this.min);
+			this.value_scaled = value;
+		}
+		
+		// set styles
+		this.inner_el.style.width = this.value * 100 + '%';
+		
+		//set attributes
+		this.el.setAttribute('value',             this.value);
+		this.el.setAttribute('data-value-scaled', this.value_scaled);
+		this.el.setAttribute('data-value-unit',   this.value_scaled + ' ' + this.unit);
+	}
+}
+
+class Knob {
+	constructor (element, min, max, step, unit, label) {
+		this.el           = element;
+		this.value        = 0;
+		this.value_scaled = 0;
+		this.min          = (min != undefined) ? min : 0;
+		this.max          = (max != undefined) ? max : 1;
+		this.step         = step || .001;
+		this.unit         = unit || '';
+		this.label        = label || '';
+		this.active       = false;
+		
+		if (typeof this.el == 'string') {
+			this.el = document.getElementById(this.el);
+
+			if (!this.el) {
+				this.el = Element.make('knob', {
+					'id'        : element,
+					'className' : this.label.length > 0 ? 'has-label' : '',
+					'data-label': label
+				});
+			}
+		}
+
+		this.dial_el = Element.make('div', {
+			'className': 'knob-dial'
+		});
+
+		this.dial_inner_el = Element.make('div', {
+			'className': 'knob-dial-inner'
+		});
+
+		this.dial_el.appendChild(this.dial_inner_el);
+		this.el.appendChild(this.dial_el);
+
+		this.set(this.volume);
+
+		this.dial_el.addEventListener('mousedown',   this.on_down.bind(this));
+		this.dial_el.addEventListener('touchdown',   this.on_down.bind(this));
+		window.addEventListener(      'mousemove',   this.on_move.bind(this));
+		window.addEventListener(      'touchmove',   this.on_move.bind(this));
+		window.addEventListener(      'mouseup',     this.on_up.bind(this));
+		window.addEventListener(      'touchup',     this.on_up.bind(this));
+		window.addEventListener(      'touchcancel', this.on_up.bind(this));
+	}
+
+	get_element () {
+		return this.el;
+	}
+
+	on_down (e) {
+		e.preventDefault();
+		this.active = true;
+		this.el.classList.add('active');
+
+		// remember the original values for future reference
+		let x = e.x;
+		if (!x && e.touches && e.touches[0]) {
+			x = e.touches[0].clientX;
+		}
+
+		let y = e.y;
+		if (!y && e.touches && e.touches[0]) {
+			y = e.touches[0].clientY;
+		}
+
+		this.orig_x     = x;
+		this.orig_y     = y;
+		this.orig_value = this.value;
+	}
+
+	on_move (e) {
+		if (this.active) {
+			e.preventDefault();
+
+			// ensure we capture either mouse.x or touch.x value
+			let x = e.x;
+			if (!x && e.touches && e.touches[0]) {
+				x = e.touches[0].clientX;
+			}
+
+			let y = e.y;
+			if (!y && e.touches && e.touches[0]) {
+				y = e.touches[0].clientY;
+			}
+
+			let diff_x = x - this.orig_x;
+			let diff_y = y - this.orig_y;
+			let value  = this.orig_value;
+			if (Math.abs(diff_x) > Math.abs(diff_y)) {
+				value += diff_x / 150;
+			} else {
+				value -= diff_y / 150;
+			}
+			
+			// cap
+			value = round(Math.min(Math.max(value, 0), 1), 2);
+
+			if (value != this.value) {
+				this.set(value, false);
+				this.generate_event();
+			}
+		}
+	}
+
+	on_up (e) {
+		if (this.active) {
+			this.active = false;
+			this.el.classList.remove('active');
+			e.preventDefault();
+		}
+	}
+
+	generate_event () {
+		let evt     = new Event('change');
+		// TODO scale with min/max
+		evt.value   = this.value_scaled;
+		evt.setting = this.label
+		evt.valueDb = this.db;
+
+		this.el.dispatchEvent(evt);
+	}
+
+	set (value, is_scaled = true) {
+		if (value != undefined && !is_scaled) {
+			this.value        = value;
+			
+			this.value_scaled = (value * (this.max - this.min)) + this.min;
+			
+			if (this.step >= 1) {
+				this.value_scaled = Math.round(this.value_scaled / this.step) * this.step;
+			} else {
+				let round_factor = 1;
+				
+				if (this.step == .01) {
+					round_factor = 2;
+				} else if (this.step == .001) {
+					round_factor = 3;
+				}
+
+				this.value_scaled = round(this.value_scaled, round_factor);
+			}
+		} else if (value != undefined && is_scaled) {
+			this.value        = (value - this.min) / (this.max - this.min);
+			this.value_scaled = value;
+		}
+		
+		this.db = round(mul_to_decibel(this.value),1);
+
+		let angle = ((this.value-0.5) * 1.5 * Math.PI);
+		this.dial_el.style.transform       = 'rotate('+      angle +'rad)';
+		this.dial_inner_el.style.transform = 'rotate('+ -1 * angle +'rad)';
+
+		let a = (this.value * (319-46)) + 46; // [46-319]
+		this.el.style.background = 'conic-gradient(from 3.1416rad, rgba(0,0,0,0) 44deg, #148 44deg, #3ad '+a+'deg, rgba(0,0,0,0) '+(a+2)+'deg)';
+
+		// set attributes
+		this.el.setAttribute('value',             this.value);
+		this.el.setAttribute('data-value-scaled', this.value_scaled);
+		this.el.setAttribute('data-value-unit',   this.value_scaled + ' ' + this.unit);
+		this.el.setAttribute('data-db',           this.db);
+
+		this.dial_inner_el.setAttribute('value',             this.value);
+		this.dial_inner_el.setAttribute('data-value-scaled', this.value_scaled);
 	}
 }
 
@@ -1056,5 +2089,21 @@ class VUMeter {
  * Prevents problems with objects not loaded yet while trying to assign these.
  */
 window.addEventListener('pageshow', function () {
-	window.main = new OBSRemote();
+	window.obs  = new OBS();
+	window.obsr = new OBSRemote();
+
+	window.setTimeout(obs.connect.bind(obs), 1000);
+
+	// var t = new Slider('test1');
+	// document.getElementsByClassName('control-list')[0].appendChild(t.el);
+	// var r = new Slider('test2',0,1000,1,'ms','gate_open');
+	// document.getElementsByClassName('control-list')[0].appendChild(r.el);
+	// var x = new Slider('test3',-96,0,0.1,'dB','close_threshold');
+	// document.getElementsByClassName('control-list')[0].appendChild(x.el);
+	// var z = new Slider('test4',-1,0,0.01,'?','who knows');
+	// document.getElementsByClassName('control-list')[0].appendChild(z.el);
+	// var c = new Slider('test6',-2,-1,0.01,'??','who knows redux');
+	// document.getElementsByClassName('control-list')[0].appendChild(c.el);
+	// var q = new Slider('test5',1800,5500,100,'K','temperature');
+	// document.getElementsByClassName('control-list')[0].appendChild(q.el);
 }, false);
