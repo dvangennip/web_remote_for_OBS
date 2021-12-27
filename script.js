@@ -158,7 +158,7 @@ class OBS {
 		try {
 			return await this.obs.send(command, params || {});
 		} catch (e) {
-			console.log('Error sending command', command, ' - error is:', e);
+			console.log('Error sending command', command, ', for item:', params.item, ' - error is:', e);
 			return {};
 		}
 	}
@@ -500,51 +500,67 @@ class OBSRemote {
 	}
 
 	update_source_list () {
-		// TODO make this flexible
+		/*
+		 * Flexible parsing of inputs that can be used to adjust OBS source items.
+		 * 
+		 * Currently supported:
+		 * - Text inputs
+		 * - Select inputs (can feed into multiple text sources)
+		 */
 
-		// intermission text
-		document.getElementById('IM-text').addEventListener('change', function (e) {
-			this.set_text(e.target.name, e.target.value);
-			e.preventDefault()
-		}.bind(this), false);
+		let input_list  = [];
+		let select_list = [];
 
-		document.getElementById('IM-select').addEventListener('change', function (e) {
-			document.getElementById('IM-text').value = e.target.value;
-			
-			this.set_text('IM-text', e.target.value);
+		// get all potential inputs
+		let all_inputs = document.getElementsByTagName('input');
 
-			e.preventDefault()
-		}.bind(this), false);
+		for (var i = 0; i < all_inputs.length; i++) {
+			let ix = all_inputs[i].getAttribute('data-obsr-source');
 
-		// lower third
-		document.getElementById('LT-name').addEventListener('change', function (e) {
-			this.set_text(e.target.name, e.target.value);
-			e.preventDefault()
-		}.bind(this), false);
-		
-		document.getElementById('LT-role').addEventListener('change', function (e) {
-			this.set_text(e.target.name, e.target.value);
-			e.preventDefault()
-		}.bind(this), false);
+			if (ix != null)
+				input_list.push(all_inputs[i]);
+		}
 
-		document.getElementById('LT-affiliation').addEventListener('change', function (e) {
-			this.set_text(e.target.name, e.target.value);
-			e.preventDefault()
-		}.bind(this), false);
+		// get all potential select elements
+		let all_select_els = document.getElementsByTagName('select');
 
-		document.getElementById('LT-select').addEventListener('change', function (e) {
-			var values = e.target.value.split('|');
+		for (var j = 0; j < all_select_els.length; j++) {
+			let sx = all_select_els[j].getAttribute('data-obsr-selector');
 
-			document.getElementById('LT-name').value        = values[0];
-			document.getElementById('LT-role').value        = values[1];
-			document.getElementById('LT-affiliation').value = values[2];
-			
-			this.set_text('LT-name', values[0]);
-			this.set_text('LT-role', values[1]);
-			this.set_text('LT-affiliation', values[2]);
+			if (sx != null)
+				select_list.push(all_select_els[j]);
+		}
 
-			e.preventDefault()
-		}.bind(this), false);
+		// set up source items
+		input_list.forEach((item) => {
+			item.addEventListener('change', function (e) {
+				this.set_text(e.target.name, e.target.value);
+				e.preventDefault()
+			}.bind(this), false);
+		});
+
+		// set up select elements
+		select_list.forEach((item) => {
+			let sources = item.getAttribute('data-obsr-selector').split('|');
+
+			item.addEventListener('change', function (e) {
+				var values = e.target.value.split('|');
+
+				// assumption that length of values matches sources
+				for (var k = 0; k < sources.length; k++) {
+					// set value in UI (if it exists)
+					let source_el = document.getElementById(sources[k]);
+
+					if (source_el)
+						source_el.value = values[k];
+
+					// send value to OBS
+					this.set_text(sources[k], values[k]);
+				}
+
+				e.preventDefault()
+			}.bind(this), false);
+		});
 	}
 
 	async set_text (inSource, inText) {
@@ -2056,17 +2072,4 @@ window.addEventListener('pageshow', function () {
 	window.obsr = new OBSRemote();
 
 	window.setTimeout(obs.connect.bind(obs), 1000);
-
-	// var t = new Slider('test1');
-	// document.getElementsByClassName('control-list')[0].appendChild(t.el);
-	// var r = new Slider('test2',0,1000,1,'ms','gate_open');
-	// document.getElementsByClassName('control-list')[0].appendChild(r.el);
-	// var x = new Slider('test3',-96,0,0.1,'dB','close_threshold');
-	// document.getElementsByClassName('control-list')[0].appendChild(x.el);
-	// var z = new Slider('test4',-1,0,0.01,'?','who knows');
-	// document.getElementsByClassName('control-list')[0].appendChild(z.el);
-	// var c = new Slider('test6',-2,-1,0.01,'??','who knows redux');
-	// document.getElementsByClassName('control-list')[0].appendChild(c.el);
-	// var q = new Slider('test5',1800,5500,100,'K','temperature');
-	// document.getElementsByClassName('control-list')[0].appendChild(q.el);
 }, false);

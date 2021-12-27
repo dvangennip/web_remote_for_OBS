@@ -25,7 +25,7 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
     - Volume
     - Filter settings (not all filters are supported)
 - Fullscreen toggle hotkey: `F`
-- A few custom adjustments to known scene elements (not generic, so this would need omitting)
+- Ability to edit text sources directly
 
 ## Notes and known issues
 - Any scenes with `hidden` or `subscene` in their name are ignored and not shown in the scene list.
@@ -33,6 +33,48 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
 - Audio filter settings don't pick up changes made in OBS directly (nor any changes made via other obs-websocket clients).
 - Audio list has space dedicated for visual audio volume meters, functionality not yet available in obs-websocket.
 - For more, see [Issues](https://github.com/dvangennip/obs_web_remote/issues)
+
+## Adding text source editing
+It's possible to add inputs to directly edit text sources in OBS. By adding `input` elements into the `index.html` file, the page can be customised to directly edit specific sources. The following is supported:
+
+- Text inputs
+    - These edit text sources in OBS.
+    - Make sure the `input` element has an attribute `data-obsr-source` and matching `id` and `name` values that reflect the source name in OBS.
+- Select elements
+    - Handy to select a preset for multiple text sources in one go.
+    - Requires a `data-obsr-selector` attribute to work. Its value should be the source names it feeds into (multiple are split with a `|` character).
+
+See the HTML code below for an example:
+
+````html
+<!-- add this into the <ul id="source_list"> tag within index.html -->
+<li class="source-item">
+    <h4>Lower third</h4>
+    <div class="source-inputs">
+        <div class="input-wrapper">
+            <label for="LT-name">Name</label>
+            <input type="text" id="LT-name" name="LT-name" data-obsr-source="LT-name">
+        </div>
+        <div class="input-wrapper">
+            <label for="LT-role">Role</label>
+            <input type="text" id="LT-role" name="LT-role" data-obsr-source="LT-role">
+        </div>
+        <div class="input-wrapper">
+            <label for="LT-affiliation">Affiliation</label>
+            <input type="text" id="LT-affiliation" name="LT-affiliation" data-obsr-source="LT-affiliation">
+        </div>
+        <div class="input-wrapper">
+            <label for="LT-select">Select from preset list</label>
+            <select id="LT-select" name="LT-select" data-obsr-selector="LT-name|LT-role|LT-affiliation">
+                <option value="-|-|-">No name chosen</option>
+                <option value="Some name|Fake role|Fake unit">Some name</option>
+                <option value="Another person|Another role|Affiliation">Another person</option>
+            </select>
+        </div>
+    </div>
+</li>
+<!-- </ul> -->
+````
 
 ## License
 - [Unlicense](https://unlicense.org/): This is free and unencumbered software released into the public domain.
