@@ -167,16 +167,24 @@ class OBS {
 
 class OBSRemote {
 	constructor () {
-		this.studio_mode    = false;
-		this.scene_list     = [];
-		this.scenes         = {};
-		this.scene_program  = '';
-		this.scene_preview  = '';
-		this.audio_list     = [];
-		this.tick           = 0;
+		this.studio_mode        = false;
+		this.scene_list         = [];
+		this.scenes             = {};
+		this.scene_program      = '';
+		this.scene_preview      = '';
+		this.audio_list         = [];
+		this.tick               = 0;
 
-		this.clock          = document.getElementById('status_clock');
-		this.clock_text     = document.getElementById('status_clock_time');
+		this.clock              = document.getElementById('status_clock');
+		this.clock_text         = document.getElementById('status_clock_time');
+
+		this.streaming          = false;
+		this.stream_starting    = false;
+		this.stream_stopping    = false;
+		this.recording          = false;
+		this.recording_starting = false;
+		this.recording_stopping = false;
+		this.recording_paused   = false;
 
 		// set event listeners
 		this.button_transition = document.getElementById('btn_transition');
@@ -203,7 +211,16 @@ class OBSRemote {
 			document.getElementById('streaming_edit_list').classList.toggle('hidden');
 		});
 
-		// status checklist events
+		// stream and recording buttons
+		this.stream_button    = document.getElementById('stream_button');
+		this.recording_button = document.getElementById('recording_button');
+		this.rec_pause_button = document.getElementById('rec_pause_button');
+
+		this.stream_button.addEventListener(   'click', this.toggle_streaming.bind(this));
+		this.recording_button.addEventListener('click', this.toggle_recording.bind(this));
+		this.rec_pause_button.addEventListener('click', this.toggle_rec_pause.bind(this));
+
+		// status checklist setup
 		this.setup_checklist();
 
 		// start interval updates
@@ -221,6 +238,19 @@ class OBSRemote {
 		obs.on('SourceCreated',          this.on_source_created.bind(this));
 		obs.on('SourceDestroyed',        this.on_source_destroyed.bind(this));
 		obs.on('SourceRenamed',          this.on_source_renamed.bind(this));
+
+		obs.on('StreamStarting',         this.on_stream_starting.bind(this));
+		obs.on('StreamStarted',          this.on_stream_started.bind(this));
+		obs.on('StreamStopping',         this.on_stream_stopping.bind(this));
+		obs.on('StreamStopped',          this.on_stream_stopped.bind(this));
+		obs.on('StreamStatus',           this.on_stream_status.bind(this));
+
+		obs.on('RecordingStarting',      this.on_recording_starting.bind(this));
+		obs.on('RecordingStarted',       this.on_recording_started.bind(this));
+		obs.on('RecordingStopping',      this.on_recording_stopping.bind(this));
+		obs.on('RecordingStopped',       this.on_recording_stopped.bind(this));
+		obs.on('RecordingPaused',        this.on_recording_paused.bind(this));
+		obs.on('RecordingResumed',       this.on_recording_resumed.bind(this));
 	}
 
 	on_connected () {
@@ -660,6 +690,180 @@ class OBSRemote {
 		document.getElementById('status_checklist').classList.toggle('good', count_checked == check_items.length);
 	}
 
+	toggle_streaming () {
+		if (this.streaming)
+			this.stop_streaming();
+		else
+			this.start_streaming();
+	}
+
+	async start_streaming () {
+		if (!this.streaming)
+			await obs.sendCommand('StartStreaming');
+	}
+
+	async stop_streaming () {
+		if (this.streaming)
+			await obs.sendCommand('StopStreaming');
+	}
+
+	on_stream_starting () {
+		this.streaming       = false;
+		this.stream_starting = true;
+		this.stream_stopping = false;
+		this.update_stream_rec_status();
+	}
+
+	on_stream_started () {
+		this.streaming       = true;
+		this.stream_starting = false;
+		this.stream_stopping = false;
+		this.update_stream_rec_status();
+	}
+
+	on_stream_stopping () {
+		this.streaming       = true;
+		this.stream_starting = false;
+		this.stream_stopping = true;
+		this.update_stream_rec_status();
+	}
+
+	on_stream_stopped () {
+		this.streaming       = false;
+		this.stream_starting = false;
+		this.stream_stopping = false;
+		this.update_stream_rec_status();
+	}
+
+	on_stream_status (e) {
+		// see: https://github.com/obsproject/obs-websocket/blob/4.9.1/docs/generated/protocol.md#streamstatus
+
+		// not used at the moment, because it only works when a stream is active
+		// this.update_stream_rec_status();
+	}
+
+	toggle_recording () {
+		if (this.recording)
+			this.stop_recording();
+		else
+			this.start_recording();
+	}
+
+	toggle_rec_pause () {
+		if (this.recording_paused)
+			this.resume_recording();
+		else
+			this.pause_recording();
+	}
+
+	async start_recording () {
+		if (!this.recording)
+			await obs.sendCommand('StartRecording');
+	}
+
+	async pause_recording () {
+		if (this.recording && !this.recording_paused)
+			await obs.sendCommand('PauseRecording')
+	}
+
+	async resume_recording () {
+		if (this.recording && this.recording_paused)
+			await obs.sendCommand('ResumeRecording')
+	}
+
+	async stop_recording () {
+		if (this.recording)
+			await obs.sendCommand('StopRecording');
+	}
+
+	on_recording_starting () {
+		this.recording          = false;
+		this.recording_starting = true;
+		this.recording_stopping = false;
+		this.recording_paused   = false;
+
+		this.update_stream_rec_status();
+	}
+
+	on_recording_started () {
+		this.recording          = true;
+		this.recording_starting = false;
+		this.recording_stopping = false;
+		this.recording_paused   = false;
+
+		this.update_stream_rec_status();
+	}
+
+	on_recording_stopping () {
+		this.recording          = true;
+		this.recording_starting = false;
+		this.recording_stopping = true;
+		this.recording_paused   = false;
+
+		this.update_stream_rec_status();
+	}
+
+	on_recording_stopped () {
+		this.recording          = false;
+		this.recording_starting = false;
+		this.recording_stopping = false;
+		this.recording_paused   = false;
+
+		this.update_stream_rec_status();
+	}
+
+	on_recording_paused () {
+		this.recording          = true;
+		this.recording_starting = false;
+		this.recording_stopping = false;
+		this.recording_paused   = true;
+
+		this.update_stream_rec_status();
+	}
+
+	on_recording_resumed () {
+		this.recording          = true;
+		this.recording_starting = false;
+		this.recording_stopping = false;
+		this.recording_paused   = false;
+
+		this.update_stream_rec_status();
+	}
+
+	update_stream_rec_status () {
+		// stream button
+		this.stream_button.classList.toggle('active',   this.streaming);
+		this.stream_button.classList.toggle('starting', this.stream_starting);
+		this.stream_button.classList.toggle('stopping', this.stream_stopping);
+		
+		let stream_button_text = this.streaming ? 'Stop streaming' : 'Start streaming';
+		if (this.stream_starting)
+			stream_button_text = 'Starting stream...';
+		else if (this.stream_stopping)
+			stream_button_text = 'Stopping stream...';
+		document.getElementById('stream_button_text').innerHTML = stream_button_text;
+		
+		// recording button
+		this.recording_button.classList.toggle('active',   this.recording);
+		this.recording_button.classList.toggle('starting', this.recording_starting);
+		this.recording_button.classList.toggle('stopping', this.recording_stopping);
+
+		let recording_button_text = this.recording ? 'Stop recording' : 'Start recording';
+		if (this.recording_starting)
+			recording_button_text = 'Starting recording...';
+		else if (this.recording_stopping)
+			recording_button_text = 'Stopping recording...';
+		document.getElementById('recording_button_text').innerHTML = recording_button_text;
+
+		// recording pause button
+		if (this.recording)
+			this.rec_pause_button.removeAttribute('disabled');
+		else
+			this.rec_pause_button.setAttribute('disabled', 'disabled');
+		this.rec_pause_button.classList.toggle('active', this.recording_paused);
+		document.getElementById('rec_pause_button_text').innerHTML = this.recording_paused ? 'Resume recording' : 'Pause recording';
+	}
+
 	handle_key_event (inEvent) {
 		// avoid 'silencing' input fields
 		if (inEvent.target && inEvent.target.nodeName.toLowerCase() === 'input') {
@@ -754,7 +958,7 @@ class SourceScene {
 	}
 
 	update_state () {
-		// add/remove class if is /not program
+		// add/remove class based on program/preview state
 		if (this.is_program) {
 			this.el.className = 'scene program';
 		} else if (this.is_preview) {

@@ -910,6 +910,10 @@ li span {
 	flex-grow: inherit;
 }
 
+li.status-edit-item span {
+	flex-grow: unset;
+}
+
 /* sources  */
 
 .source-list > li {
@@ -1072,6 +1076,35 @@ li span {
 
 .checklist li label {
 	padding-left: 0.5em;
+}
+
+.status-edit-item button.active {
+	background-color: rgba(0,255,0,0.1);
+	border-color: rgba(110,255,163);
+	color: rgba(160,255,213);
+}
+.status-edit-item button.active:hover {
+	background-color: rgba(0,255,0,0.2);
+}
+
+.status-edit-item button.starting,
+.status-edit-item button.stopping {
+	background-color: rgba(255,127,80,0.1);
+	border-color: rgb(255, 148, 148);
+	color: rgb(255, 200, 200);
+}
+.status-edit-item button.starting:hover,
+.status-edit-item button.stopping:hover {
+	background-color: rgba(255,127,80,0.2);
+}
+
+.status-edit-item button[disabled] {
+	border-color: #888;
+	color: #888;
+}
+
+.status-edit-item button span {
+	color: inherit;
 }
 
 /* ------------- */
