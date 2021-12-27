@@ -174,6 +174,7 @@ class OBSRemote {
 		this.scene_preview      = '';
 		this.audio_list         = [];
 		this.tick               = 0;
+		this.aspect_ratio       = '16/9';
 
 		this.clock              = document.getElementById('status_clock');
 		this.clock_text         = document.getElementById('status_clock_time');
@@ -255,8 +256,7 @@ class OBSRemote {
 
 	on_connected () {
 		// start requesting updates
-
-		//await get_video_info // GetVideoInfo -> outputWidth/outputHeight
+		this.get_video_info();
 
 		this.get_scene_list();
 
@@ -278,6 +278,18 @@ class OBSRemote {
 		}
 
 		// TODO loop over audio sources as well
+	}
+
+	async get_video_info () {
+		// get aspect ratio
+		let response = await obs.sendCommand('GetVideoInfo');
+
+		if (response.status == 'ok') {
+			let w = response['outputWidth'];
+			let h = response['outputHeight'];
+
+			this.aspect_ratio = `${w}/${h}`;
+		}
 	}
 
 	update_on_interval () {
@@ -952,6 +964,7 @@ class SourceScene {
 		this.el.appendChild(this.label);
 
 		// get initial state set up
+		this.el.style.aspectRatio = obsr.aspect_ratio;
 		this.set_screenshot();
 	}
 
@@ -1031,7 +1044,7 @@ class SourceScene {
 
 	async set_screenshot () {
 		let img_width  = (this.el.offsetWidth > 0) ? this.el.offsetWidth : 250;
-		let img_height = (1 / (1920/1080)) * img_width; // TODO improve ratio based on current scene data
+		let img_height = (1 / obsr.aspect_ratio) * img_width;
 
 		let response = await obs.sendCommand('TakeSourceScreenshot', {
 			'sourceName': this.name,
