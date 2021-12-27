@@ -592,6 +592,10 @@ class OBSRemote {
 		let response = await obs.sendCommand('GetStreamingStatus');
 
 		if (response.status == 'ok') {
+			this.streaming        = response.streaming;
+			this.recording        = response.recording;
+			this.recording_paused = response['recording-paused'];
+
 			document.getElementById('status_stream').classList.toggle('good',   response.streaming);
 			document.getElementById('status_stream').classList.toggle('alert', !response.streaming);
 			
@@ -631,6 +635,8 @@ class OBSRemote {
 			document.getElementById('status_frames_text').innerHTML =
 				Math.round(response2.stats['fps']) + ' fps, '+ response2.stats['output-skipped-frames'] + ' skipped';
 		}
+
+		this.update_stream_rec_status();
 	}
 
 	update_status_clock () {
