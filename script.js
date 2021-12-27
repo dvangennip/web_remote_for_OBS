@@ -204,16 +204,7 @@ class OBSRemote {
 		});
 
 		// status checklist events
-		let check_items   = document.getElementsByClassName('checklist-item');
-
-		for (var i = 0; i < check_items.length; i++) {
-			check_items[i].addEventListener('change', this.update_checklist.bind(this));
-		}
-		this.update_checklist();
-
-		document.getElementById('status_checklist').addEventListener('click', (e) => {
-			document.getElementById('status_checklist_list').classList.toggle('hidden');
-		});
+		this.setup_checklist();
 
 		// start interval updates
 		window.setInterval(this.update_status_clock.bind(this),1000);
@@ -615,6 +606,43 @@ class OBSRemote {
 	update_status_clock () {
 		this.clock_text.innerHTML = (new Date()).toLocaleTimeString('nl-NL');  // 24 hour format
 		this.clock.classList.toggle('alert', !obs.connected);
+	}
+
+	setup_checklist () {
+		// prepare list
+		let check_list  = document.getElementById('status_ordered_checklist');
+		let check_items = check_list.children;
+
+		for (var i = 0; i < check_items.length; i++) {
+			let el      = check_items[i];
+			let el_text = check_items[i].innerHTML;
+
+			let input_el = Element.make('input', {
+				'type'     : 'checkbox',
+				'id'       : 'check' + (i+1),
+				'name'     : 'check' + (i+1),
+				'class'    : 'checklist-item',
+				'events'   : {
+					'change': this.update_checklist.bind(this)
+				}
+			});
+			let label_el = Element.make('label', {
+				'for'      : 'check' + (i+1),
+				'innerHTML': el_text
+			});
+
+			el.innerHTML = '';
+			el.appendChild(input_el);
+			el.appendChild(label_el);
+		}
+
+		// trigger update once for initiation
+		this.update_checklist();
+
+		// set up status bar toggle event
+		document.getElementById('status_checklist').addEventListener('click', (e) => {
+			document.getElementById('status_checklist_list').classList.toggle('hidden');
+		});
 	}
 
 	update_checklist () {
