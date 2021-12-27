@@ -174,7 +174,11 @@ class OBSRemote {
 		this.scene_preview      = '';
 		this.audio_list         = [];
 		this.tick               = 0;
+
+		this.video_width        = 1920;
+		this.video_height       = 1080;
 		this.aspect_ratio       = '16/9';
+		this.video_fps          = 30;
 
 		this.clock              = document.getElementById('status_clock');
 		this.clock_text         = document.getElementById('status_clock_time');
@@ -285,10 +289,12 @@ class OBSRemote {
 		let response = await obs.sendCommand('GetVideoInfo');
 
 		if (response.status == 'ok') {
-			let w = response['outputWidth'];
-			let h = response['outputHeight'];
+			this.video_width  = response['baseWidth'];
+			this.video_height = response['baseHeight'];
 
-			this.aspect_ratio = `${w}/${h}`;
+			this.aspect_ratio = `${this.video_width}/${this.video_height}`;
+
+			this.video_fps    = response['fps'];
 		}
 	}
 
@@ -631,7 +637,7 @@ class OBSRemote {
 		}
 		
 		let response2 = await obs.sendCommand('GetStats');
-		// use 'average-frame-time' // example 2.726 millis
+		// use 'average-frame-time' 
 
 		if (response2.status == 'ok') {
 			document.getElementById('status_cpu').className =
@@ -639,13 +645,20 @@ class OBSRemote {
 			document.getElementById('status_cpu_text').innerHTML =
 				Math.ceil(response2.stats['cpu-usage']) + '%';
 
+			let fps_time_per_frame = 1000 / this.video_fps;
+			let avg_time_per_frame = response2.stats['average-frame-time']; // example 2.726 millis
+			let pct_time_per_frame = round(100.0 * avg_time_per_frame / fps_time_per_frame);
+
 			let is_alert_state = (response2.stats['output-skipped-frames'] / response2.stats['output-total-frames'] > 0.05);
 			if (!is_alert_state) {
-				is_alert_state = (response2.stats['fps'] < 30);
+				is_alert_state = (response2.stats['fps'] < this.video_fps);
+			}
+			if (!is_alert_state) {
+				is_alert_state = (pct_time_per_frame > 50);
 			}
 			document.getElementById('status_frames').className = (is_alert_state) ? 'status-item alert' : 'status-item';
 			document.getElementById('status_frames_text').innerHTML =
-				Math.round(response2.stats['fps']) + ' fps, '+ response2.stats['output-skipped-frames'] + ' skipped';
+				Math.round(response2.stats['fps']) + ' fps, ' + pct_time_per_frame + '%, ' + response2.stats['output-skipped-frames'] + ' skipped';
 		}
 
 		this.update_stream_rec_status();
