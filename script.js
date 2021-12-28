@@ -2024,7 +2024,7 @@ class Fader {
 			let loc_y = y - this.el.offsetTop;
 			let pct_y = Math.min(Math.max(1 - (loc_y / this.el.clientHeight), 0), 1);
 
-			console.log(y,loc_y,pct_y,this.el.offsetTop,this.el.clientHeight,e);
+			// console.log(y,loc_y,pct_y,this.el.offsetTop,this.el.clientHeight,e);
 
 			let value = round(pct_y,2);
 

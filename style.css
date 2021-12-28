@@ -653,7 +653,7 @@ slider {
 	color: #ccc;
 }
 slider:hover,
-slider.active {
+slider.control-active {
 	color: #fff;
 	background-color: #383838;
 }
@@ -678,7 +678,7 @@ slider::after {
 	/*border-right: 3px solid #4ad;*/
 	border-radius: 3px 0 0 3px;
 }
-.active > .slider-inner {
+.control-active > .slider-inner {
 	background-image: linear-gradient(.25turn, #259, #4ad);;
 }
 
