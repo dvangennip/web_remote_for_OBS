@@ -1657,10 +1657,21 @@ class SourceAudio {
 	}
 
 	on_filters_reordered (e) {
-		//SourceFiltersReordered -> (see protocol)
+		//SourceFiltersReordered -> filters (Array in correct order)
 		if (e.sourceName == this.name) {
-			console.log(e);
-			// TODO
+			// first, match order of e.filters
+			for (let i = 0; i < e.filters.length; i++) {
+				// update again after potential changes
+				let old_index = this.filters.map(x => x.name).indexOf(e.filters[i].name);
+
+				// splice (remove) element from array at old_index, getting element in return, and insert that in new position i
+				this.filters.splice(i, 0, this.filters.splice(old_index, 1)[0]);
+			}
+				
+			// second, move elements into place by moving them towards the end, one by one in order
+			for (var i = 0; i < this.filters.length; i++) {
+				this.filters_list_el.append( this.filters[i].get_element() );
+			}
 		}
 	}
 }
