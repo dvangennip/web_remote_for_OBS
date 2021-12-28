@@ -1364,23 +1364,22 @@ class SourceAudio {
 		this.get_source_filters();
 
 		// handle relevant events
-		obs.on('SourceVolumeChanged',    this.on_volume_changed.bind(this));
-		obs.on('SourceMuteStateChanged', this.on_mute_state_changed.bind(this));
-		obs.on('SourceAudioActivated',   (e) => {console.log(e, e['sourceName']);});
-		obs.on('SourceAudioDeactivated', (e) => {console.log(e, e['sourceName']);});
+		obs.on('SourceVolumeChanged',           this.on_volume_changed.bind(this));
+		obs.on('SourceMuteStateChanged',        this.on_mute_state_changed.bind(this));
+		obs.on('SourceAudioActivated',          (e) => {console.log(e, e['sourceName']);});
+		obs.on('SourceAudioDeactivated',        (e) => {console.log(e, e['sourceName']);});
 		
 		//SourceAudioMixersChanged -> (see protocol)
 
 		//SourceCreated + SourceDestroyed (handle externally?)
-		obs.on('SourceRenamed',          this.on_source_renamed.bind(this));
+		obs.on('SourceRenamed',                 this.on_source_renamed.bind(this));
 
-		obs.on('SceneItemVisibilityChanged', this.on_visibility_changed.bind(this));
+		obs.on('SceneItemVisibilityChanged',    this.on_visibility_changed.bind(this));
 
-		obs.on('SourceFilterAdded',      this.on_filter_added.bind(this));
-		obs.on('SourceFilterRemoved',    this.on_filter_removed.bind(this));
-		obs.on('SourceFiltersReordered', this.on_filters_reordered.bind(this));
-		
-		//SourceFilterVisibilityChanged -> sourceName, filterName, filterEnabled
+		obs.on('SourceFilterAdded',             this.on_filter_added.bind(this));
+		obs.on('SourceFilterRemoved',           this.on_filter_removed.bind(this));
+		obs.on('SourceFiltersReordered',        this.on_filters_reordered.bind(this));
+		obs.on('SourceFilterVisibilityChanged', this.on_filter_visibility_changed.bind(this));
 	}
 
 	get_element () {
@@ -1672,6 +1671,15 @@ class SourceAudio {
 			for (var i = 0; i < this.filters.length; i++) {
 				this.filters_list_el.append( this.filters[i].get_element() );
 			}
+		}
+	}
+
+	on_filter_visibility_changed (e) {
+		//SourceFilterVisibilityChanged -> sourceName, filterName, filterEnabled
+		if (e.sourceName == this.name) {
+			console.log(e);
+			let f = this.filters.find(x => x.name == e.filterName);
+			f.on_visibility_changed(e);
 		}
 	}
 }
@@ -2058,6 +2066,14 @@ class SourceFilter {
 
 		// request remote update
 		this.set_visibility();
+	}
+
+	on_visibility_changed (e) {
+		// store data
+		this.enabled = e.filterEnabled;
+
+		// update UI
+		this.el.classList.toggle('disabled', !this.enabled);
 	}
 
 	async set_visibility () {
