@@ -26,32 +26,40 @@
 			<span id="status_cpu_text">--%</span>
 		</div>
 		<div id="status_frames" class="status-item" title="Frames per second, Time used to generate frames as percentage of available time, Number of frames skipped">
-			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-film"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
 			<span id="status_frames_text">-- fps, --%, 0 skipped</span>
 		</div>
 		<div id="status_stream" class="status-item clickable" title="Streaming status">
-			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-radio">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="2"></circle>
 				<path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path>
 			</svg>
 			<span id="status_stream_text">Not streaming</span>
 		</div>
 		<div id="status_recording" class="status-item clickable" title="Recording status">
-			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-disc">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10"></circle>
 				<circle cx="12" cy="12" r="3"></circle>
 			</svg>
 			<span id="status_recording_text">Not recording</span>
 		</div>
+		<div id="status_virtualcam" class="status-item clickable" title="Virtual camera status">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="12" cy="10" r="8"></circle>
+				<circle cx="12" cy="10" r="3"></circle>
+				<path d="M12 22v-4m-5 4h5-5zm10 0h-5 5z"></path>
+			</svg>
+			<span id="status_virtualcam_text">Off</span>
+		</div>
 		<div id="status_checklist" class="status-item clickable" title="Checklist">
-			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check-circle">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
 				<polyline points="22 4 12 14.01 9 11.01"></polyline>
 			</svg>
 			<span id="status_checklist_text">0/0</span>
 		</div>
 		<div id="status_clock" class="status-item" title="Current time">
-			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-clock">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="10"></circle>
 				<polyline points="12 6 12 12 16 14"></polyline>
 			</svg>
@@ -125,6 +133,22 @@
 							<line x1="14" y1="15" x2="14" y2="9"></line>
 						</svg>
 						<span id="rec_pause_button_text">Pause recording</span>
+					</button>
+				</div>
+			</div>
+		</li>
+		<li id="virtualcam_edit_list" class="source-item status-edit-item hidden">
+			<h4>Virtual camera</h4>
+			<div class="source-inputs">
+				<div class="input-wrapper">
+					<label for="virtualcam_button">Enable</label>
+					<button type="submit" id="virtualcam_button" name="virtualcam-button">
+						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="10" r="8"></circle>
+							<circle cx="12" cy="10" r="3"></circle>
+							<path d="M12 22v-4m-5 4h5-5zm10 0h-5 5z"></path>
+						</svg>
+						<span id="virtualcam_button_text">Start virtual camera</span>
 					</button>
 				</div>
 			</div>

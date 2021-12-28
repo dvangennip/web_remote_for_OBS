@@ -190,6 +190,7 @@ class OBSRemote {
 		this.recording_starting = false;
 		this.recording_stopping = false;
 		this.recording_paused   = false;
+		this.virtualcam_active  = false;
 
 		// set event listeners
 		this.button_transition = document.getElementById('btn_transition');
@@ -215,6 +216,9 @@ class OBSRemote {
 		document.getElementById('status_recording').addEventListener('click', (e) => {
 			document.getElementById('streaming_edit_list').classList.toggle('hidden');
 		});
+		document.getElementById('status_virtualcam').addEventListener('click', (e) => {
+			document.getElementById('virtualcam_edit_list').classList.toggle('hidden');
+		});
 
 		// stream and recording buttons
 		this.stream_button    = document.getElementById('stream_button');
@@ -224,6 +228,10 @@ class OBSRemote {
 		this.stream_button.addEventListener(   'click', this.toggle_streaming.bind(this));
 		this.recording_button.addEventListener('click', this.toggle_recording.bind(this));
 		this.rec_pause_button.addEventListener('click', this.toggle_rec_pause.bind(this));
+
+		// virtual camera button
+		this.virtualcam_button = document.getElementById('virtualcam_button');
+		this.virtualcam_button.addEventListener('click', this.toggle_virtualcam.bind(this));
 
 		// status checklist setup
 		this.setup_checklist();
@@ -256,11 +264,16 @@ class OBSRemote {
 		obs.on('RecordingStopped',       this.on_recording_stopped.bind(this));
 		obs.on('RecordingPaused',        this.on_recording_paused.bind(this));
 		obs.on('RecordingResumed',       this.on_recording_resumed.bind(this));
+
+		obs.on('VirtualCamStarted',      this.on_virtualcam_started.bind(this));
+		obs.on('VirtualCamStopped',      this.on_virtualcam_stopped.bind(this));
 	}
 
 	on_connected () {
 		// start requesting updates
 		this.get_video_info();
+
+		this.get_virtualcam_status();
 
 		this.get_scene_list();
 
@@ -893,6 +906,51 @@ class OBSRemote {
 			this.rec_pause_button.setAttribute('disabled', 'disabled');
 		this.rec_pause_button.classList.toggle('active', this.recording_paused);
 		document.getElementById('rec_pause_button_text').innerHTML = this.recording_paused ? 'Resume recording' : 'Pause recording';
+	}
+
+	async get_virtualcam_status () {
+		let response = await obs.sendCommand('GetVirtualCamStatus');
+
+		if (response.status == 'ok') {
+			this.virtualcam_active = response['isVirtualCam'];
+		}
+
+		this.update_virtualcam_status();
+	}
+
+	toggle_virtualcam () {
+		if (this.virtualcam_active)
+			this.stop_virtualcam();
+		else
+			this.start_virtualcam();
+	}
+
+	async start_virtualcam () {
+		await obs.sendCommand('StartVirtualCam');
+	}
+
+	async stop_virtualcam () {
+		await obs.sendCommand('StopVirtualCam');
+	}
+
+	on_virtualcam_started () {
+		this.virtualcam_active = true;
+		this.update_virtualcam_status();
+	}
+
+	on_virtualcam_stopped () {
+		this.virtualcam_active = false;
+		this.update_virtualcam_status();
+	}
+
+	update_virtualcam_status() {
+		// status bar
+		document.getElementById('status_virtualcam').classList.toggle('good', this.virtualcam_active);
+		document.getElementById('status_virtualcam_text').innerHTML = (this.virtualcam_active) ? 'On' : 'Off';
+
+		// edit pane
+		this.virtualcam_button.classList.toggle('active', this.virtualcam_active);
+		document.getElementById('virtualcam_button_text').innerHTML = (this.virtualcam_active) ? 'Stop virtual camera' : 'Start virtual camera';
 	}
 
 	handle_key_event (inEvent) {
@@ -1950,7 +2008,7 @@ class Fader {
 	on_down (e) {
 		e.preventDefault();
 		this.active = true;
-		this.el.classList.add('active');
+		this.el.classList.add('control-active');
 	}
 
 	on_move (e) {
@@ -1980,7 +2038,7 @@ class Fader {
 	on_up (e) {
 		if (this.active) {
 			this.active = false;
-			this.el.classList.remove('active');
+			this.el.classList.remove('control-active');
 			e.preventDefault();
 		}
 	}
@@ -2082,7 +2140,7 @@ class Slider {
 	on_down (e) {
 		e.preventDefault();
 		this.active = true;
-		this.el.classList.add('active');
+		this.el.classList.add('control-active');
 	}
 
 	on_move (e) {
@@ -2110,7 +2168,7 @@ class Slider {
 	on_up (e) {
 		if (this.active) {
 			this.active = false;
-			this.el.classList.remove('active');
+			this.el.classList.remove('control-active');
 			e.preventDefault();
 		}
 	}
@@ -2210,7 +2268,7 @@ class Knob {
 	on_down (e) {
 		e.preventDefault();
 		this.active = true;
-		this.el.classList.add('active');
+		this.el.classList.add('control-active');
 
 		// remember the original values for future reference
 		let x = e.x;
@@ -2265,7 +2323,7 @@ class Knob {
 	on_up (e) {
 		if (this.active) {
 			this.active = false;
-			this.el.classList.remove('active');
+			this.el.classList.remove('control-active');
 			e.preventDefault();
 		}
 	}
