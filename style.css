@@ -1041,6 +1041,16 @@ li.status-edit-item span {
 	margin-right: 5px;
 }
 
+.status-icon-active {
+	display: none;
+}
+.status-item.good .status-icon-active {
+	display: unset;
+}
+.status-item.good .status-icon-inactive {
+	display: none;
+}
+
 .status-item.good {
 	color: mediumseagreen;
 }
@@ -1113,6 +1123,39 @@ li.status-edit-item span {
 
 .status-edit-item button span {
 	color: inherit;
+}
+
+.other-outputs-info-list {
+	background: #444;
+	padding: 2px 8px;
+	border-radius: 5px;
+}
+
+.output-info-item {
+	margin: 4px 0;
+	font-size: 0.8em;
+}
+.output-info-item.has-audio::after {
+	content: '[A]';
+	padding-left: 6px;
+}
+.output-info-item.has-video::after {
+	content: '[V]';
+	padding-left: 6px;
+}
+.output-info-item.has-audio.has-video::after {
+	content: '[AV]';
+	padding-left: 6px;
+}
+
+.output-info-item.good {
+	color: mediumseagreen;
+}
+.output-info-item.warning {
+	color: khaki;
+}
+.output-info-item.alert {
+	color: coral;
 }
 
 /* ------------- */

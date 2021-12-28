@@ -191,6 +191,7 @@ class OBSRemote {
 		this.recording_stopping = false;
 		this.recording_paused   = false;
 		this.virtualcam_active  = false;
+		this.outputs            = [];
 
 		// set event listeners
 		this.button_transition = document.getElementById('btn_transition');
@@ -211,13 +212,16 @@ class OBSRemote {
 
 		// status stream / recording
 		document.getElementById('status_stream').addEventListener('click', (e) => {
-			document.getElementById('streaming_edit_list').classList.toggle('hidden');
+			document.getElementById('outputs_edit_list').classList.toggle('hidden');
 		});
 		document.getElementById('status_recording').addEventListener('click', (e) => {
-			document.getElementById('streaming_edit_list').classList.toggle('hidden');
+			document.getElementById('outputs_edit_list').classList.toggle('hidden');
 		});
 		document.getElementById('status_virtualcam').addEventListener('click', (e) => {
-			document.getElementById('virtualcam_edit_list').classList.toggle('hidden');
+			document.getElementById('outputs_edit_list').classList.toggle('hidden');
+		});
+		document.getElementById('status_outputs').addEventListener('click', (e) => {
+			document.getElementById('outputs_edit_list').classList.toggle('hidden');
 		});
 
 		// stream and recording buttons
@@ -316,6 +320,7 @@ class OBSRemote {
 		window.clearTimeout(self.interval_timer);
 
 		this.update_status_list();
+		this.update_outputs();
 
 		// reset interval timeout
 		self.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
@@ -950,7 +955,71 @@ class OBSRemote {
 
 		// edit pane
 		this.virtualcam_button.classList.toggle('active', this.virtualcam_active);
-		document.getElementById('virtualcam_button_text').innerHTML = (this.virtualcam_active) ? 'Stop virtual camera' : 'Start virtual camera';
+		document.getElementById('virtualcam_button_text').innerHTML = (this.virtualcam_active) ? 'Stop virtual cam' : 'Start virtual cam';
+	}
+
+	async update_outputs () {
+		let response = await obs.sendCommand('ListOutputs');
+
+		let active_outputs = 0;
+		this.outputs       = [];
+
+		if (response.status == 'ok') {
+			for (let i = 0; i < response.outputs.length; i++) {
+				let o = response.outputs[i];
+
+				// skip over output types handled elsewhere
+				if (o.name != 'adv_stream' && o.name != 'adv_file_output' && o.name != 'virtualcam_output') {
+					this.outputs.push(o);
+
+					if (o.active)
+						active_outputs++;
+				}
+			}
+		}
+
+		// update status bar
+		document.getElementById('status_outputs').classList.toggle('good', active_outputs > 0);
+		document.getElementById('status_outputs_text').innerHTML = `${active_outputs}/${this.outputs.length}`;
+
+		// update edit pane
+		let ul = document.getElementById('other_outputs_info');
+
+		for (let j = 0; j < this.outputs.length; j++) {
+			let o     = this.outputs[j];
+
+			let id    = get_slug('output_item_' + o.name);
+			let li_el = document.getElementById(id);
+
+			if (!li_el) {
+				li_el = Element.make('li', {
+					'id'       : id,
+					'className': 'output-info-item'
+				});
+
+				ul.appendChild(li_el);
+			}
+
+			let has_audio = o.flags.audio;
+			if (o.settings.uses_audio !== undefined)
+				has_audio = o.settings.uses_audio;
+
+			li_el.classList.toggle('good',      o.active);
+			li_el.classList.toggle('warning',   o.reconnecting);
+			li_el.classList.toggle('has-audio', has_audio);
+			li_el.classList.toggle('has-video', o.flags.video);
+			li_el.innerHTML = `${o.name} (${o.type.replace('_output','')})`;
+		}
+
+		// remove outputs no longer found in list but still in page ul
+		let current_output_ids = this.outputs.map(x => get_slug('output_item_' + x.name));
+		for (let k = 0; k < ul.children.length; k++) {
+			let c = ul.children[k];
+
+			if (!current_output_ids.includes(c.id)) {
+				ul.removeChild(c);
+			}
+		}
 	}
 
 	handle_key_event (inEvent) {

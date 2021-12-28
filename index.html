@@ -11,7 +11,7 @@
 <body>
 	<div class="status-list">
 		<div id="status_cpu" class="status-item" title="CPU load (OBS only)">
-			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-cpu">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
 				<rect x="9" y="9" width="6" height="6"></rect>
 				<line x1="9" y1="1" x2="9" y2="4"></line>
@@ -50,6 +50,23 @@
 				<path d="M12 22v-4m-5 4h5-5zm10 0h-5 5z"></path>
 			</svg>
 			<span id="status_virtualcam_text">Off</span>
+		</div>
+		<div id="status_outputs" class="status-item clickable" title="Other outputs">
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="status-icon-inactive">
+				<path d="M13 3H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2v-3"></path>
+				<path d="M8 21h8"></path>
+				<path d="M12 17v4"></path>
+				<path d="M22 3l-5 5"></path>
+				<path d="M17 3l5 5"></path>
+			</svg>
+			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="status-icon-active">
+				<path d="M13 3H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2v-3"></path>
+				<path d="M8 21h8"></path>
+				<path d="M12 17v4"></path>
+				<path d="M17 8l5-5"></path>
+				<path d="M17 3h5v5"></path>
+			</svg>
+			<span id="status_outputs_text">0/0</span>
 		</div>
 		<div id="status_checklist" class="status-item clickable" title="Checklist">
 			<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -101,7 +118,7 @@
 				<button type="submit" id="obs_ws_connect" name="obs-ws-connect">Connect</button>
 			</div>
 		</li>
-		<li id="streaming_edit_list" class="source-item status-edit-item hidden">
+		<li id="outputs_edit_list" class="source-item status-edit-item hidden">
 			<h4>Output options</h4>
 			<div class="source-inputs align-start">
 				<div class="input-wrapper">
@@ -135,21 +152,20 @@
 						<span id="rec_pause_button_text">Pause recording</span>
 					</button>
 				</div>
-			</div>
-		</li>
-		<li id="virtualcam_edit_list" class="source-item status-edit-item hidden">
-			<h4>Virtual camera</h4>
-			<div class="source-inputs">
 				<div class="input-wrapper">
-					<label for="virtualcam_button">Enable</label>
+					<label for="virtualcam_button">Virtual camera</label>
 					<button type="submit" id="virtualcam_button" name="virtualcam-button">
 						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="12" cy="10" r="8"></circle>
 							<circle cx="12" cy="10" r="3"></circle>
 							<path d="M12 22v-4m-5 4h5-5zm10 0h-5 5z"></path>
 						</svg>
-						<span id="virtualcam_button_text">Start virtual camera</span>
+						<span id="virtualcam_button_text">Start virtual cam</span>
 					</button>
+				</div>
+				<div class="input-wrapper">
+					<label for="other_outputs_info">Other outputs</label>
+					<ul id="other_outputs_info" class="other-outputs-info-list"></ul>
 				</div>
 			</div>
 		</li>
