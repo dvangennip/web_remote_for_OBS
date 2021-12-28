@@ -492,19 +492,21 @@ class OBSRemote {
 	}
 
 	on_source_created (e) {
-		console.log('Created',e);
+		// console.log('Created',e);
 		// if (e['sourceType'] == 'scene') {
 		// handled with ScenesChanged event	
 		// }
 		if (e['sourceType'] == 'input') {
-			// TODO if it has audio, handle it
+			// in case it has audio, handle it
+			this.update_audio_list();
 		}
 	}
 
 	on_source_destroyed (e) {
-		console.log('Destroyed',e);
+		// console.log('Destroyed',e);
 		if (e['sourceType'] == 'input') {
-			// TODO if it has audio, handle it
+			// in it has audio, handle it
+			this.update_audio_list();
 		}
 	}
 
@@ -525,6 +527,8 @@ class OBSRemote {
 
 	async update_audio_list () {
 		let response = await obs.sendCommand('GetSourcesList');
+
+		let current_audio_names = [];
 		
 		if (response.status == 'ok' && response.sources) {
 			for (let i = 0; i < response['sources'].length; i++) {
@@ -534,22 +538,42 @@ class OBSRemote {
 				if (s.type == 'input' &&
 					(s.typeId == 'ffmpeg_source' || s.typeId == 'ndi_source' || s.typeId == 'coreaudio_input_capture' || s.typeId == 'ios-camera-source')
 				) {
+					// first, check if it already exists. If it does, skip
 					let source_exists = false;
 					for (let j = 0; j < this.audio_list.length; j++) {
 						if (this.audio_list[j].name == s.name) {
 							source_exists = true;
+							current_audio_names.push(s.name);
 							break;
 						}
 					}
 
+					// create new SourceAudio when it's a new input
 					if (!source_exists) {
 						let sa = new SourceAudio(s);
 						this.audio_list.push(sa);
+						current_audio_names.push(s.name);
 						document.getElementById('audio_list').appendChild( sa.get_element() );
 					}
 				}
 			}
 		}
+
+		// handle situation where audio items still exist but have since been removed from OBS
+		for (let k = this.audio_list.length - 1; k >= 0; k--) {
+			let a = this.audio_list[k];
+
+			if (!current_audio_names.includes(a.name)) {
+				// remove and destroy element
+				a.on_source_destroyed();
+				document.getElementById('audio_list').removeChild( a.get_element() );
+				
+				// remove from audio list
+				let ix = this.audio_list.indexOf(a);
+				this.audio_list.splice(ix,1);
+			}
+		}
+
 	}
 
 	toggle_all_audio () {
@@ -1013,7 +1037,7 @@ class OBSRemote {
 
 		// remove outputs no longer found in list but still in page ul
 		let current_output_ids = this.outputs.map(x => get_slug('output_item_' + x.name));
-		for (let k = 0; k < ul.children.length; k++) {
+		for (let k = ul.children.length - 1; k >= 0; k--) {
 			let c = ul.children[k];
 
 			if (!current_output_ids.includes(c.id)) {
@@ -1367,6 +1391,11 @@ class SourceAudio {
 		if (e['previousName'] == this.name) {
 			this.change_name( e['newName'] );
 		}
+	}
+
+	on_source_destroyed () {
+		// TODO
+		// trigger all filter elements to be removed and destroyed
 	}
 
 	change_name (name) {

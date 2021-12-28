@@ -16,7 +16,7 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
     - Transition hotkey: `T` (only when in Studio Mode)
     - Left click to switch to scene or (when in Studio Mode) set Preview scene
     - Use `0-9` to set numbered scene (only available for the first ten scenes)
-    - Right click (or `ctrl + [0-9]`) to immediately set scene as Program (when in Studio Mode)
+    - Right click (or `shift + [0-9]`) to immediately set scene as Program (when in Studio Mode)
 - Scene previews
     - Updates every 2 seconds for Program and Preview scenes
     - Updates every 10 seconds for inactive scenes
