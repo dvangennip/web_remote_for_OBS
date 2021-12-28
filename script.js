@@ -955,7 +955,6 @@ class SourceScene {
 			'className': 'scene',
 			'events'   : {
 				'click'      : function (e) {  // left click
-					console.log(e);
 					this.set_scene( e.shiftKey );
 				}.bind(this),
 				'contextmenu': function (e) {  // right click

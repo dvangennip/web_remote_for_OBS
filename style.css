@@ -649,6 +649,9 @@ slider {
 	cursor: col-resize;
 	position: relative; /*  this allows for the ::after absolute positioning to work relative to this el */
 }
+.disabled slider {
+	color: #ccc;
+}
 slider:hover,
 slider.active {
 	color: #fff;
@@ -990,6 +993,11 @@ li.status-edit-item span {
 	padding: 5px 6px 3px 6px;
 }
 
+.input-wrapper input[disabled],
+.filter-setting-wrapper input[disabled] {
+	color: #bbb;
+}
+
 .input-wrapper button {
 	display: flex;
 	justify-content: center;
@@ -1231,6 +1239,9 @@ li.status-edit-item span {
 	color: #aaa;
 	/*font-style: italic;*/
 	text-shadow: none;
+}
+.disabled select {
+	color: #bbb;
 }
 
 .filter-settings-section {
