@@ -1586,7 +1586,7 @@ class SourceAudio {
 		this.set_track(track_index, !this.tracks[track_index-1].classList.contains('enabled'));
 	}
 
-	async get_source_filters (inSource) {
+	async get_source_filters () {
 		let response = await obs.sendCommand('GetSourceFilters', {'sourceName': this.name});
 		
 		if (response && response.status == 'ok') {
@@ -1604,10 +1604,7 @@ class SourceAudio {
 					case 'ndi_audiofilter':
 					case 'vst_filter':
 					case 'invert_polarity_filter': {
-						let filter_instance = new SourceFilter(this.source, response.filters[i]);
-
-						this.filters.push(filter_instance);
-						this.filters_list_el.appendChild( filter_instance.get_element() );
+						this.add_filter(response.filters[i]);
 						break;
 					}
 					default:  // do nothing for types not handled above
@@ -1617,22 +1614,54 @@ class SourceAudio {
 		}
 	}
 
+	add_filter (filter_data) {
+		// first, check if filter exists already
+		let current_filters = this.filters.map(x => x.name);
+
+		if (!current_filters.includes(filter_data.name)) {
+			// if new, create and add
+			let filter_instance = new SourceFilter(this.source, filter_data);
+
+			this.filters.push(filter_instance);
+			this.filters_list_el.appendChild( filter_instance.get_element() );
+		}
+	}
+
+	remove_filter (filter_data) {
+		// first, check if filter exists
+		let current_filters = this.filters.map(x => x.name);
+
+		if (current_filters.includes(filter_data.name)) {
+			// if it exists, remove
+			let ix = current_filters.indexOf(filter_data.name);
+			let f  = this.filters[ix];
+
+			this.filters_list_el.removeChild( f.get_element() );
+			this.filters.splice(ix,1);
+		}
+	}
+
 	on_filter_added (e) {
-		// TODO
 		//SourceFilterAdded -> sourceName, filterName, filterType, filterSettings
-		console.log(e);
+		if (e.sourceName == this.name) {
+			// just get all filters for this source and work from there
+			this.get_source_filters();
+		}
 	}
 
 	on_filter_removed (e) {
-		// TODO
 		//SourceFilterRemoved -> sourceName, filterName, filterType
-		console.log(e);
+		if (e.sourceName == this.name) {
+			this.remove_filter({'name': e.filterName, 'type': e.filterType});
+		}
 	}
 
 	on_filters_reordered (e) {
-		// TODO
 		//SourceFiltersReordered -> (see protocol)
-		console.log(e);
+		if (e.sourceName == this.name) {
+			console.log(e);
+			// TODO
+		}
 	}
 }
 
