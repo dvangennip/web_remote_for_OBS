@@ -1373,7 +1373,7 @@ class SourceAudio {
 		obs.on('SourceAudioActivated',          (e) => {console.log(e, e['sourceName']);});
 		obs.on('SourceAudioDeactivated',        (e) => {console.log(e, e['sourceName']);});
 		
-		//SourceAudioMixersChanged -> (see protocol)
+		obs.on('SourceAudioMixersChanged',      this.on_tracks_changed.bind(this));
 
 		//SourceCreated + SourceDestroyed (handle externally?)
 		obs.on('SourceRenamed',                 this.on_source_renamed.bind(this));
@@ -1544,6 +1544,14 @@ class SourceAudio {
 
 		if (response && response.status == 'ok') {
 			this.tracks[track_index-1].classList.toggle('enabled', state);
+		}
+	}
+
+	on_tracks_changed (e) {
+		if (e.sourceName == this.name) {
+			for (let i = 0; i < e.mixers.length; i++) {
+				this.tracks[i].classList.toggle('enabled', e.mixers[i].enabled);
+			}
 		}
 	}
 
