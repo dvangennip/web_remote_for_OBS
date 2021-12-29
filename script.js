@@ -159,7 +159,7 @@ class OBS {
 			return await this.obs.send(command, params || {});
 		} catch (e) {
 			console.log('Error sending command', command, ', for item:', params.item, ' - error is:', e);
-			return {};
+			return {'status': 'error', 'command': command, 'params': params, 'error': e.error};
 		}
 	}
 }
@@ -299,6 +299,11 @@ class OBSRemote {
 		}
 
 		// TODO loop over audio sources as well
+	}
+
+	is_connection_open () {
+		// TODO return true if connected but false if in the midst of scenecollection or profile change
+		return obs.connected;
 	}
 
 	async get_video_info () {
@@ -530,6 +535,36 @@ class OBSRemote {
 	}
 
 	async update_audio_list () {
+		// first, check suitable input typeIDs versus master list
+		let suitable_audio_typeIds = [];
+
+		let types_response = await obs.sendCommand('GetSourceTypesList');
+
+		if (types_response && types_response.status == 'ok') {
+			for (var i = 0; i < types_response.types.length; i++) {
+				let t = types_response.types[i];
+
+				if (t.type == 'input' && t.caps.hasAudio) {
+					// console.log(t.typeId);
+					suitable_audio_typeIds.push(t.typeId);
+				}
+			}
+		}
+
+		// second, get special sources list as those are sceneless
+		let special_sources = [];
+
+		let special_sources_response = await obs.sendCommand('GetSpecialSources');
+
+		if (special_sources_response && special_sources_response.status == 'ok') {
+			for (let key in special_sources_response) {
+				// filter out default keys, everything else is a special source key
+				if (key != 'message-id' && key != 'messageId' && key != 'status')
+					special_sources.push( special_sources_response[key] );
+			}
+		}
+
+		// now get to checking all sources
 		let response = await obs.sendCommand('GetSourcesList');
 
 		let current_audio_names = [];
@@ -539,9 +574,7 @@ class OBSRemote {
 				let s = response['sources'][i];
 				
 				// type is 'scene' or 'input'
-				if (s.type == 'input' &&
-					(s.typeId == 'ffmpeg_source' || s.typeId == 'ndi_source' || s.typeId == 'coreaudio_input_capture' || s.typeId == 'ios-camera-source')
-				) {
+				if (s.type == 'input' && suitable_audio_typeIds.includes(s.typeId)) {
 					// first, check if it already exists. If so, skip
 					let source_exists = false;
 					for (let j = 0; j < this.audio_list.length; j++) {
@@ -554,7 +587,7 @@ class OBSRemote {
 
 					// create new SourceAudio when it's a new input
 					if (!source_exists) {
-						let sa = new SourceAudio(s);
+						let sa = new SourceAudio(s, special_sources.includes(s.name));
 						this.audio_list.push(sa);
 						current_audio_names.push(s.name);
 						document.getElementById('audio_list').appendChild( sa.get_element() );
@@ -1249,7 +1282,7 @@ class SourceScene {
 }
 
 class SourceAudio {
-	constructor (inSource) {
+	constructor (inSource, is_sceneless) {
 		this.source      = inSource;
 		this.name        = inSource.name;
 		this.slug        = get_slug(inSource.name);
@@ -1263,6 +1296,8 @@ class SourceAudio {
 		this.tracks      = [];
 		this.filters     = [];
 		this.last_update = 9999999; // improbably high number
+		this.in_scene    = false;
+		this.sceneless   = is_sceneless || false;
 
 		// create elements
 		this.el                = Element.make('li',     {'className': 'audio-item', 'id': 'audio_item_' + this.slug});
@@ -1284,11 +1319,10 @@ class SourceAudio {
 		this.fader             = new Fader(this.slug + '_fader');
 		this.fader.get_element().addEventListener('change', this.on_fader_change.bind(this));
 		this.column_buttons_el = Element.make('div',    {'className': 'audio-column-buttons'});
-		if (this.typeId != 'coreaudio_input_capture') {
+		if (!this.sceneless) {
 			this.btn_visibility    = Element.make('button', {
 				'className': 'audio-button visibility',
 				'title'    : 'Toggle visibility',
-				// 'innerHTML': '<img class="visible-on" src="icons/eye.svg"><img class="visible-off" src="icons/eye-off.svg">',
 				'innerHTML': '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="visible-on"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="visible-off"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>',
 				'events': {
 					'click': this.on_visibility_btn_click.bind(this)
@@ -1337,7 +1371,7 @@ class SourceAudio {
 		this.column_fader_el.appendChild(this.fader.get_element());
 
 		this.column_buttons_el.appendChild(this.btn_mute);
-		if (this.typeId != 'coreaudio_input_capture') {
+		if (!this.sceneless) {
 			this.column_buttons_el.appendChild(this.btn_visibility);
 		}
 		// this.column_buttons_el.appendChild(this.btn_solo);
@@ -1360,7 +1394,7 @@ class SourceAudio {
 		this.update_state();
 
 		this.get_volume();
-		if (this.typeId != 'coreaudio_input_capture') {
+		if (!this.sceneless) {
 			this.get_visibility();
 		}
 		this.get_active();
@@ -1384,6 +1418,8 @@ class SourceAudio {
 		obs.on('SourceFilterRemoved',           this.on_filter_removed.bind(this));
 		obs.on('SourceFiltersReordered',        this.on_filters_reordered.bind(this));
 		obs.on('SourceFilterVisibilityChanged', this.on_filter_visibility_changed.bind(this));
+
+		obs.on('SwitchScenes',                  this.on_scene_changed.bind(this));
 	}
 
 	get_element () {
@@ -1397,8 +1433,15 @@ class SourceAudio {
 	}
 
 	on_source_destroyed () {
-		// TODO
+		// stop updating
+		this.pause_update();
+
 		// trigger all filter elements to be removed and destroyed
+		for (let i = this.filters.length - 1; i >= 0; i--) {
+			this.filters[i].pause_update_on_interval();
+
+			// TODO remove element
+		}
 	}
 
 	change_name (name) {
@@ -1421,9 +1464,10 @@ class SourceAudio {
 
 	update_state () {
 		// main element
-		this.el.classList.toggle('active',  this.active);
-		this.el.classList.toggle('muted',   this.muted);
-		this.el.classList.toggle('visible', this.visible);
+		this.el.classList.toggle('active',   this.active);
+		this.el.classList.toggle('muted',    this.muted);
+		this.el.classList.toggle('visible',  this.visible && (this.in_scene || this.sceneless));
+		this.el.classList.toggle('in-scene', this.in_scene || this.sceneless);
 
 		// volume
 		// NOT USED YET this.vol_max_el.innerHTML = (round(mul_to_decibel(this.volume_max), 1) + ' dB').replace('Infinity','∞');
@@ -1436,6 +1480,9 @@ class SourceAudio {
 
 		// buttons
 		// this.btn_mute.classList.toggle()
+		if (!this.sceneless) {
+			this.btn_visibility.toggleAttribute('disabled', !this.in_scene);
+		}
 		// this.btn_solo.classList.toggle()
 
 		// track buttons
@@ -1446,6 +1493,23 @@ class SourceAudio {
 	pause_update () {
 		if (this.interval_timer)
 			window.clearInterval(this.interval_timer);
+	}
+
+	on_scene_changed (e) {
+		// check if this SourceItem is in the current scene
+		this.in_scene = false;
+
+		for (var i = 0; i < e.sources.length; i++) {
+			if (e.sources[i].name.toLowerCase() == this.name.toLowerCase()) {
+				this.in_scene = true;
+
+				this.get_visibility();
+				break;
+			}
+		}
+
+		if (!this.in_scene)
+			this.update_state();
 	}
 
 	async get_volume () {
@@ -1493,14 +1557,21 @@ class SourceAudio {
 	}
 
 	async get_visibility () {
-		// omitted: 'scene-name': scene, 
-		let response = await obs.sendCommand('GetSceneItemProperties', {'item': this.name});
+		// by default, assume false. in case of error, it remains false
+		let visible = false;
 
-		if (response && response.status == 'ok') {
-			this.visible = response['visible'];
+		if (this.in_scene) {
+			// omitted: 'scene-name': scene, 
+			let response = await obs.sendCommand('GetSceneItemProperties', {'item': this.name});
 
-			this.update_state();
+			if (response && response.status == 'ok') {
+				visible = response['visible'];
+			}
 		}
+
+		this.visible = visible;
+
+		this.update_visibility_state();
 	}
 
 	set_visibility (state) {
@@ -1512,8 +1583,16 @@ class SourceAudio {
 		if (e['item-name'] == this.name) {
 			this.visible = e['item-visible'];
 
-			this.update_state();
+			this.update_visibility_state();
 		}
+	}
+
+	update_visibility_state () {
+		// also get active state, or just trigger update directly
+		if (this.visible)
+			this.get_active();
+		else
+			this.update_state();
 	}
 
 	async get_active () {

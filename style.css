@@ -822,6 +822,11 @@ button.audio-button.solo:active {
 	display: none;
 }
 
+button.audio-button[disabled] {
+	pointer-events: none;
+	color: #444;
+}
+
 .volume-off,
 .volume-on,
 .volume-1,
