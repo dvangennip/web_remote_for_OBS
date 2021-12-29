@@ -292,7 +292,7 @@ class OBSRemote {
 	}
 
 	on_disconnected () {
-		window.clearTimeout(self.interval_timer);
+		this.pause_update_on_interval();
 
 		for (var name in this.scenes) {
 			this.scenes[name].pause_update();
@@ -305,7 +305,7 @@ class OBSRemote {
 		// get aspect ratio
 		let response = await obs.sendCommand('GetVideoInfo');
 
-		if (response.status == 'ok') {
+		if (response && response.status == 'ok') {
 			this.video_width  = response['baseWidth'];
 			this.video_height = response['baseHeight'];
 
@@ -316,14 +316,18 @@ class OBSRemote {
 	}
 
 	update_on_interval () {
-		// clear timeout
-		window.clearTimeout(self.interval_timer);
+		this.pause_update_on_interval();
 
 		this.update_status_list();
 		this.update_outputs();
 
 		// reset interval timeout
-		self.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+		this.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+	}
+
+	pause_update_on_interval () {
+		// clear timeout
+		window.clearTimeout(this.interval_timer);
 	}
 
 	toggle_fullscreen () {
@@ -538,7 +542,7 @@ class OBSRemote {
 				if (s.type == 'input' &&
 					(s.typeId == 'ffmpeg_source' || s.typeId == 'ndi_source' || s.typeId == 'coreaudio_input_capture' || s.typeId == 'ios-camera-source')
 				) {
-					// first, check if it already exists. If it does, skip
+					// first, check if it already exists. If so, skip
 					let source_exists = false;
 					for (let j = 0; j < this.audio_list.length; j++) {
 						if (this.audio_list[j].name == s.name) {
@@ -1635,6 +1639,7 @@ class SourceAudio {
 			let ix = current_filters.indexOf(filter_data.name);
 			let f  = this.filters[ix];
 
+			f.pause_update_on_interval();
 			this.filters_list_el.removeChild( f.get_element() );
 			this.filters.splice(ix,1);
 		}
@@ -1677,7 +1682,6 @@ class SourceAudio {
 	on_filter_visibility_changed (e) {
 		//SourceFilterVisibilityChanged -> sourceName, filterName, filterEnabled
 		if (e.sourceName == this.name) {
-			console.log(e);
 			let f = this.filters.find(x => x.name == e.filterName);
 			f.on_visibility_changed(e);
 		}
@@ -1686,14 +1690,15 @@ class SourceAudio {
 
 class SourceFilter {
 	constructor (inSource, inFilter) {
-		this.source      = inSource;
-		this.source_slug = get_slug(inSource.name);
-		this.filter      = inFilter;
-		this.name        = this.filter.name;
-		this.type        = this.filter.type;
-		this.enabled     = this.filter.enabled;
-		this.open        = false;
-		this.settings    = {};
+		this.source         = inSource;
+		this.source_slug    = get_slug(inSource.name);
+		this.filter         = inFilter;
+		this.name           = this.filter.name;
+		this.type           = this.filter.type;
+		this.enabled        = this.filter.enabled;
+		this.open           = false;
+		this.settings       = {};
+		this.settings_items = {};
 
 		this.el = Element.make('div', {
 			'id'       : 'source_' + this.source_slug + '_filter_' + this.name,
@@ -1772,13 +1777,13 @@ class SourceFilter {
 				this.settings['output_gain']     = 0;   // [-32-32] dB
 				break;
 			case 'expander_filter':
+				this.settings['presets']         = 'Expander'; // Expander|Gate
 				this.settings['ratio']           = 2;     // [1-20 in .1 steps]
 				this.settings['threshold']       = -40;   // [-60-0]  dB
 				this.settings['attack_time']     = 10;    // [1-100]  ms
 				this.settings['release_time']    = 50;    // [1-1000] ms
 				this.settings['output_gain']     = 0;     // [-32-32] dB
-				this.settings['detector']        = 'RMS'; // RMS|peak
-				this.settings['presets']         = 'Expander'; // Expander|Gate
+				// this.settings['detector']        = 'RMS'; // RMS|peak // no longer used?
 				break;
 			case 'gain_filter':
 				this.settings['db']              = 0;  // [-30-30] dB
@@ -1877,12 +1882,12 @@ class SourceFilter {
 				case 'delay_ms':
 					max = 500; // can go higher
 					break;
-				case 'detector':
-					unit    = '';
-					format  = 'select';
-					options = ['RMS','peak'];
-					labels  = ['RMS','Peak'];
-					break;
+				// case 'detector':  // no longer used?
+				// 	unit    = '';
+				// 	format  = 'select';
+				// 	options = ['RMS','peak'];
+				// 	labels  = ['RMS','Peak'];
+				// 	break;
 				case 'presets':
 					unit    = '';
 					format  = 'select';
@@ -1935,13 +1940,14 @@ class SourceFilter {
 				'className': 'filter-setting-label'
 			});
 
-			var input_el = undefined;
+			let input_item = undefined;
+			let input_el   = undefined;
 
 			if (format == 'number') {
-				input_el = new Slider('filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key + '_unit_label',min,max,step,unit,label);
-				input_el.set(v);
+				input_item = new Slider('filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key + '_unit_label',min,max,step,unit,label);
+				input_item.set(v);
 
-				input_el = input_el.get_element();
+				input_el = input_item.get_element();
 
 				input_el.addEventListener('change', (e) =>  {
 					// update in internal data if changed
@@ -1953,7 +1959,7 @@ class SourceFilter {
 					}
 				});
 			} else if (format == 'string') {
-				input_el = Element.make('input', {
+				input_item = input_el = Element.make('input', {
 					'id'              : 'filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key,
 					'name'            : 'filter-' + this.source_slug + '-type-' + this.type + '-setting-' + key,
 					'type'            : (format == 'number') ? 'range' : 'text',
@@ -1988,7 +1994,7 @@ class SourceFilter {
 					}
 				}
 
-				input_el = Element.make('select', {
+				input_item = input_el = Element.make('select', {
 					'elements'        : option_els,
 					'id'              : 'filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key,
 					'name'            : 'filter-' + this.source_slug + '-type-' + this.type + '-setting-' + key,
@@ -2000,7 +2006,7 @@ class SourceFilter {
 					'data-format'     : format,
 					'events'          : {
 						'input': function (e) {
-							var val = e.target.value;
+							let val = e.target.value;
 							if (e.target.getAttribute('data-format') === 'indexed') {
 								val = parseFloat(val);
 							}
@@ -2025,7 +2031,26 @@ class SourceFilter {
 			s_el.appendChild(input_el);
 
 			this.settings_el.appendChild(s_el);
+
+			this.settings_items[key] = input_item;
 		}
+
+		// set up updates on interval (no events available to get filter changes)
+		this.update_on_interval();
+	}
+
+	update_on_interval () {
+		this.pause_update_on_interval();
+
+		this.get_filter_settings();
+
+		// reset interval timeout
+		this.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+	}
+
+	pause_update_on_interval () {
+		// clear timeout
+		window.clearTimeout(this.interval_timer);
 	}
 
 	get_element () {
@@ -2036,16 +2061,6 @@ class SourceFilter {
 		if (name) {
 			this.name               = name;
 			this.title_el.innerHTML = name;
-		}
-	}
-
-	async get_filter_settings (inSource, inFilter) {
-		let response = await obs.sendCommand('GetSourceFilterInfo', {'sourceName': this.source.name, 'filterName': inFilter});
-		
-		if (response && response.status == 'ok') {
-			// merge settings with what's stored
-			// for each variable, overwrite
-			// trigger visual refresh
 		}
 	}
 
@@ -2085,6 +2100,57 @@ class SourceFilter {
 		key_value_pair[inSetting] = inValue;
 
 		await obs.sendCommand('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair});
+	}
+
+	async get_filter_settings () {
+		let response = await obs.sendCommand('GetSourceFilterInfo', {'sourceName': this.source.name, 'filterName': this.name});
+
+		if (response && response.status == 'ok') {
+			// set enabled state
+			this.enabled = response.enabled;
+
+			// update UI
+			this.el.classList.toggle('disabled', !this.enabled);
+			
+			// merge settings with what's stored
+			for (let key in response.settings) {
+				if (this.settings[key] != response.settings[key]) {
+					this.settings[key] = response.settings[key];
+
+					// also update UI for this setting
+					let input_item = this.settings_items[key];
+					
+					if (input_item.set && typeof input_item.set == 'function')
+						input_item.set( this.settings[key] );
+					else if (input_item.getAttribute('type') == 'text')
+						input_item.value = this.settings[key];
+					else if (input_item.nodeName && input_item.nodeName.toLowerCase() == 'select') {
+						// first, find index of new value
+						let newSelectedIndex = 0;
+						for (var i = 0; i < input_item.children.length; i++) {
+							// if match is found, store and exit the for loop
+							if (input_item.children[i].value.toLowerCase() == this.settings[key].toLowerCase()) {
+								newSelectedIndex = i;
+								break;
+							}
+						}
+
+						// need to explicitly set the chosen value by its index
+						input_item.selectedIndex = newSelectedIndex;
+						
+						// second, properly set the value
+						if (input_item.getAttribute('data-format') === 'indexed') {
+							this.settings[key] = parseFloat(this.settings[key]);
+						}
+						else if (input_item.getAttribute('data-format') === 'boolean') {
+							this.settings[key] = (this.settings[key] === 'true') ? true : false;
+						}
+
+					} else
+						console.log('unhandled filter setting change:', key, this.settings[key], input_item);
+				}
+			}
+		}
 	}
 }
 
