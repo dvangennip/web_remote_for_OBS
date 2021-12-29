@@ -8,7 +8,7 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
 2. Point browser to [`index.html`](/index.html) (or use the link above)
 3. Control OBS via the webpage.
     - You'll have to enter the obs-websocket connection details on the page before connecting.
-    - Code relies on [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js) (included here)
+    - Code relies on [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js) (included here for convenience)
 
 ## Features
 - Enable/disable Studio Mode (hotkey: `S`)
@@ -22,6 +22,7 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
     - Updates every 10 seconds for inactive scenes
 - Control audio sources
     - Mute/unmute
+    - Show/hide
     - Volume
     - Filter settings (not all filters are supported)
 - Fullscreen toggle hotkey: `F`
@@ -29,9 +30,7 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
 
 ## Notes and known issues
 - Any scenes with `hidden` or `subscene` in their name are ignored and not shown in the scene list.
-- Start/stop streaming and recording buttons are not functional yet.
-- Audio filter settings don't pick up changes made in OBS directly (nor any changes made via other obs-websocket clients).
-- Audio list has space dedicated for visual audio volume meters, functionality not yet available in obs-websocket.
+- Audio list has space dedicated for visual audio volume meters, but that functionality is not yet available in obs-websocket.
 - For more, see [Issues](https://github.com/dvangennip/obs_web_remote/issues)
 
 ## Adding text source editing
@@ -78,4 +77,5 @@ See the HTML code below for an example:
 
 ## License
 - [Unlicense](https://unlicense.org/): This is free and unencumbered software released into the public domain.
+- [obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js) has its own license.
 - Icons used are from [lucide.dev](https://lucide.dev/) (see [their license](https://github.com/lucide-icons/lucide/blob/master/LICENSE))
