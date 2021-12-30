@@ -1063,7 +1063,7 @@ li.status-edit-item span {
 	color: khaki;
 }
 .status-item.alert {
-	color: coral;
+	color: #ff7150;
 }
 
 #status_buttons {
@@ -1153,15 +1153,29 @@ li.status-edit-item span {
 	padding-left: 6px;
 }
 
-.output-info-item.good {
+.status-edit-message {
+	background-color: #444;
+	border-radius: 5px;
+	padding: 8px 7px 6px;
+	color: #eee;
+	font-size: 0.9em;
+	margin-top: 7px;
+}
+
+.output-info-item.good,
+.status-edit-message.good {
 	color: mediumseagreen;
 }
-.output-info-item.warning {
+.output-info-item.warning,
+.status-edit-message.warning {
 	color: khaki;
 }
-.output-info-item.alert {
-	color: coral;
+.output-info-item.alert,
+.status-edit-message.alert {
+	color: #ff7150;
 }
+
+
 
 /* ------------- */
 

@@ -51,45 +51,85 @@ var round = function (value, precision) {
 
 class OBS {
 	constructor () {
-		this.connected = false;
-		this.obs       = new OBSWebSocket();
+		this.connected            = false;
+		this.authenticated        = false;
+		this.auth_failure         = false;
+		this.obs                  = new OBSWebSocket();
 
-		this.host      = localStorage.getItem('host') || 'localhost:4444';
-		this.password  = localStorage.getItem('password') || '';
+		this.host                 = localStorage.getItem('host') || 'localhost:4444';
+		this.password             = localStorage.getItem('password') || '';
 
-		document.getElementById('obs_ws_host').value = this.host;
-		document.getElementById('obs_ws_password').value = this.password;
+		this.edit_pane            = document.getElementById('obs_ws_connection_edit_list');
+		this.host_input           = document.getElementById('obs_ws_host');
+		this.password_input       = document.getElementById('obs_ws_password');
+		this.connect_button       = document.getElementById('obs_ws_connect');
+		this.message_output       = document.getElementById('obw_ws_messages');
+
+		this.host_input.value     = this.host;
+		this.password_input.value = this.password;
 
 		// set up basic event handlers
 		this.obs.on('error', err => {
+			// this.connected = true;
 			console.error('socket error:', err);
 		});
 
 		this.obs.on('ConnectionOpened', () => {
-			document.getElementById('obs_ws_connect').innerHTML = 'Disconnect';
+			this.connect_button.innerHTML = 'Disconnect';
+			this.message_output.innerHTML = 'Connection opened.';
+			this.message_output.classList.add('good');
+			this.message_output.classList.remove('alert');
+			this.connected     = true;
+			this.authenticated = false;
+			this.auth_failure  = false;
 		});
 
 		this.obs.on('ConnectionClosed', () => {
 			console.log('Disconnected');
-			this.connected = false;
+			if (this.auth_failure) {
+				this.message_output.innerHTML = 'Not connected: connection closed after authentication failure.';
+				this.message_output.classList.add('alert');
+			} else {
+				this.message_output.innerHTML = 'Not connected: connection closed.';
+				this.message_output.classList.remove('alert');
+			}
+			this.message_output.classList.remove('good');
 
-			document.getElementById('obs_ws_connect').innerHTML = 'Connect';
+			this.connected     = false;
+			this.authenticated = false;
+			this.auth_failure  = false;
 
-			document.getElementById('obs_ws_connection').classList.remove('hidden');
+			this.connect_button.innerHTML = 'Connect';
+
+			this.edit_pane.classList.remove('hidden');
 
 			obsr.on_disconnected();
 		});
 
 		this.obs.on('AuthenticationFailure', async () => {
-			// TODO give error message
+			console.log('Authentication failed.');
+			this.message_output.innerHTML = 'Connected but authentication failed.';
+			this.message_output.classList.add('alert');
+			this.authenticated = false;
+			this.auth_failure  = true;
+
+			this.connect_button.innerHTML = 'Connect';
+
+			this.edit_pane.classList.remove('hidden');
+
+			obsr.on_disconnected();
 		});
 
 		this.obs.on('AuthenticationSuccess', async () => {
 			let v = await this.obs.send('GetVersion', {});
 			console.log('Connected to obs-websocket v' + v['obs-websocket-version'] + ' on OBS v' + v['obs-studio-version']);
-			this.connected = true;
+			this.message_output.innerHTML = `Connected to obs-websocket v${v['obs-websocket-version']} on OBS v${v['obs-studio-version']}.`;
+			this.message_output.classList.add('good');
+			this.message_output.classList.remove('alert');
+			this.authenticated = true;
+			this.auth_failure  = false;
 
-			document.getElementById('obs_ws_connection').classList.add('hidden');
+			this.edit_pane.classList.add('hidden');
 			
 			// kickstart update processes in OBSRemote
 			obsr.on_connected();
@@ -97,7 +137,7 @@ class OBS {
 
 		// set up connection pane
 		document.getElementById('btn_toggle_connect').addEventListener('click', this.toggle_form.bind(this));
-		document.getElementById('obs_ws_connect').addEventListener('click', this.connect_form.bind(this));
+		this.connect_button.addEventListener('click', this.connect_form.bind(this));
 	}
 
 	// essentially just passed on to the internal obs.on function
@@ -106,15 +146,15 @@ class OBS {
 	}
 
 	toggle_form () {
-		document.getElementById('obs_ws_connection').classList.toggle('hidden');
+		this.edit_pane.classList.toggle('hidden');
 	}
 
 	connect_form () {
 		if (this.connected) {
 			this.disconnect();
 		} else {
-			let host     = document.getElementById('obs_ws_host').value;
-			let password = document.getElementById('obs_ws_password').value;
+			let host     = this.host_input.value;
+			let password = this.password_input.value;
 
 			localStorage.setItem('host', host);
 			localStorage.setItem('password', password);
@@ -142,7 +182,7 @@ class OBS {
 		try {
 			await this.obs.connect({ address: this.host, password: this.password, secure });
 		} catch (e) {
-			console.log(e);
+			// console.log(e);
 		}
 	}
 
