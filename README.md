@@ -29,6 +29,7 @@ Web remote UI for controlling OBS Studio via the obs-websocket plugin
 - Ability to edit text sources directly
 
 ## Notes and known issues
+- Currently not optimised for use on mobile devices.
 - Any scenes with `hidden` or `subscene` in their name are ignored and not shown in the scene list.
 - Audio list has space dedicated for visual audio volume meters, but that functionality is not yet available in obs-websocket.
 - For more, see [Issues](https://github.com/dvangennip/obs_web_remote/issues)

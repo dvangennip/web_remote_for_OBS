@@ -51,27 +51,28 @@ var round = function (value, precision) {
 
 class OBS {
 	constructor () {
-		this.connected            = false;
-		this.authenticated        = false;
-		this.auth_failure         = false;
-		this.obs                  = new OBSWebSocket();
+		this.connected              = false;
+		this.authenticated          = false;
+		this.auth_failure           = false;
+		this.latest_connection_data = undefined;
+		this.obs                    = new OBSWebSocket();
 
-		this.host                 = localStorage.getItem('host') || 'localhost:4444';
-		this.password             = localStorage.getItem('password') || '';
+		this.host                   = localStorage.getItem('host') || 'localhost:4444';
+		this.password               = localStorage.getItem('password') || '';
 
-		this.edit_pane            = document.getElementById('obs_ws_connection_edit_list');
-		this.host_input           = document.getElementById('obs_ws_host');
-		this.password_input       = document.getElementById('obs_ws_password');
-		this.connect_button       = document.getElementById('obs_ws_connect');
-		this.message_output       = document.getElementById('obw_ws_messages');
+		this.edit_pane              = document.getElementById('obs_ws_connection_edit_list');
+		this.host_input             = document.getElementById('obs_ws_host');
+		this.password_input         = document.getElementById('obs_ws_password');
+		this.connect_button         = document.getElementById('obs_ws_connect');
+		this.message_output         = document.getElementById('obw_ws_messages');
 
-		this.host_input.value     = this.host;
-		this.password_input.value = this.password;
+		this.host_input.value       = this.host;
+		this.password_input.value   = this.password;
 
 		// set up basic event handlers
-		this.obs.on('error', err => {
+		this.obs.on('error', e => {
 			// this.connected = true;
-			console.error('socket error:', err);
+			console.error('socket error:', e);
 		});
 
 		this.obs.on('ConnectionOpened', () => {
@@ -87,7 +88,17 @@ class OBS {
 		this.obs.on('ConnectionClosed', () => {
 			console.log('Disconnected');
 			if (this.auth_failure) {
-				this.message_output.innerHTML = 'Not connected: connection closed after authentication failure.';
+				this.message_output.innerHTML = `Not connected (over ${this.secure ? '' : 'in'}secure connection): connection closed after authentication failure.`;
+				this.message_output.classList.add('alert');
+			} else if (this.latest_connection_data && this.latest_connection_data.status == 'error') {
+				this.message_output.innerHTML = `Not connected (over ${this.secure ? '' : 'in'}secure connection): ${this.latest_connection_data.description}`;
+				if (this.latest_connection_data.code == 'CONNECTION_ERROR'){
+					this.message_output.innerHTML += '<br/>Perhaps the host cannot be reached on this protocol and/or port.';
+					if (this.secure)
+						this.message_output.innerHTML += '<br/>Suggestion: attempt to prefix the host with <code>ws://</code> to enforce an insecure connection. Example: <code>ws://localhost:4444</code>';
+					else
+						this.message_output.innerHTML += '<br/>Suggestion: attempt to prefix the host with <code>wss://</code> to enforce a secure connection. Example: <code>wss://localhost:4444</code>';
+				}
 				this.message_output.classList.add('alert');
 			} else {
 				this.message_output.innerHTML = 'Not connected: connection closed.';
@@ -123,7 +134,12 @@ class OBS {
 		this.obs.on('AuthenticationSuccess', async () => {
 			let v = await this.obs.send('GetVersion', {});
 			console.log('Connected to obs-websocket v' + v['obs-websocket-version'] + ' on OBS v' + v['obs-studio-version']);
-			this.message_output.innerHTML = `Connected to obs-websocket v${v['obs-websocket-version']} on OBS v${v['obs-studio-version']}.`;
+			
+			let secureText = 'insecure';
+			if (this.secure)
+				secureText = 'secure';
+
+			this.message_output.innerHTML = `Connected (over ${secureText} connection) to obs-websocket v${v['obs-websocket-version']} on OBS v${v['obs-studio-version']}.`;
 			this.message_output.classList.add('good');
 			this.message_output.classList.remove('alert');
 			this.authenticated = true;
@@ -131,7 +147,7 @@ class OBS {
 
 			this.edit_pane.classList.add('hidden');
 			
-			// kickstart update processes in OBSRemote
+			// trigger update processes in OBSRemote
 			obsr.on_connected();
 		});
 
@@ -153,8 +169,8 @@ class OBS {
 		if (this.connected) {
 			this.disconnect();
 		} else {
-			let host     = this.host_input.value;
-			let password = this.password_input.value;
+			let host             = this.host_input.value;
+			let password         = this.password_input.value;
 
 			localStorage.setItem('host', host);
 			localStorage.setItem('password', password);
@@ -163,32 +179,58 @@ class OBS {
 		}
 	}
 
-	async connect (host, password) {
+	async connect (host, password, secureConnection) {
 		this.host      = host || this.host;
 		this.password  = password || this.password;
 		
-		let secure     = location.protocol === 'https:' || this.host.endsWith(':443');
+		// to figure out whether we ought to connect securely, check details
+		this.secure    = false;
+		// make an exception for the GitHub demo as it's served over https but won't be secure if connecting to localhost
+		//   while this can be circumvented by adding ws:// or http:// in front of this.host, it would require additional work for new users
+		//   using a secure connection is still possible with the demo if wss:// or http:// protocol info is added
+		if (location.host == 'dvangennip.github.io')
+			this.secure = this.host.endsWith(':443');
+		else
+			this.secure = location.protocol === 'https:' || this.host.endsWith(':443');
 		
+		// handle hosts that define the protocol
 		if (this.host.indexOf('://') !== -1) {
 			let url = new URL(this.host);
-			secure = url.protocol === 'wss:' || url.protocol === 'https:';
-			this.host = url.hostname + ':' + (url.port ? url.port : secure ? 443 : 80);
+			
+			this.secure = url.protocol === 'wss:' || url.protocol === 'https:';
+			
+			this.host = url.hostname + ':' + (url.port ? url.port : this.secure ? 443 : 80);
 		}
-		console.log('Connecting to:', this.host, '- secure:', secure, '- using password:', this.password);
+
+		console.log(`Connecting to ${this.host} (secure: ${this.secure}, password: ${this.password})`);
+		if (this.secure)
+			this.message_output.innerHTML = `Connecting (over secure connection) to ${this.host}...`;
+		else
+			this.message_output.innerHTML = `Connecting (over insecure connection) to ${this.host}...`;
+		this.message_output.classList.add('good');
 		
+		// ensure we're currently disconnected
 		await this.disconnect();
-		this.connected = false;
 		
 		try {
-			await this.obs.connect({ address: this.host, password: this.password, secure });
+			let response = await this.obs.connect({ address: this.host, password: this.password, secure: this.secure });
+			this.latest_connection_data = response;
+			// if successful, it'll generate a ConnectionOpened event
 		} catch (e) {
-			// console.log(e);
+			this.latest_connection_data = e;
+			console.log(e);
 		}
 	}
 
 	async disconnect () {
 		await this.obs.disconnect();
 		this.connected = false;
+	}
+
+	autoConnect () {
+		// only auto connect when a password is set
+		if (this.password.length > 0)
+			this.connect();
 	}
 
 	async sendCommand (command, params) {
@@ -198,7 +240,7 @@ class OBS {
 		try {
 			return await this.obs.send(command, params || {});
 		} catch (e) {
-			console.log('Error sending command', command, ', for item:', params.item, ' - error is:', e);
+			console.log(`Error sending command: ${command}, for item: ${params.item}. Error is:`, e);
 			return {'status': 'error', 'command': command, 'params': params, 'error': e.error};
 		}
 	}
@@ -2739,5 +2781,5 @@ window.addEventListener('pageshow', function () {
 	window.obs  = new OBS();
 	window.obsr = new OBSRemote();
 
-	window.setTimeout(obs.connect.bind(obs), 1000);
+	window.setTimeout(obs.autoConnect.bind(obs), 1000);
 }, false);

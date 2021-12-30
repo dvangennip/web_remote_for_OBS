@@ -1156,9 +1156,10 @@ li.status-edit-item span {
 .status-edit-message {
 	background-color: #444;
 	border-radius: 5px;
-	padding: 8px 7px 6px;
+	padding: 7px 7px 6px;
 	color: #eee;
 	font-size: 0.9em;
+	line-height: 1.5em;
 	margin-top: 7px;
 }
 
@@ -1175,7 +1176,11 @@ li.status-edit-item span {
 	color: #ff7150;
 }
 
-
+.status-edit-message code {
+	background-color: #383838;
+	padding: 1px 4px;
+	border-radius: 4px;
+}
 
 /* ------------- */
 
