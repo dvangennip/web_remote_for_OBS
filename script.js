@@ -75,6 +75,11 @@ class OBS {
 		this.obs.on('error', e => {
 			// this.connected = true;
 			console.error('socket error:', e);
+			if (e && e.status === undefined)
+				e['status']      = 'error';
+			if (e && e.description === undefined)
+				e['description'] = 'websocket error (check network connection and whether OBS is still responsive)';
+			this.latest_connection_data = e;
 		});
 
 		this.obs.on('ConnectionOpened', () => {
