@@ -1009,6 +1009,24 @@ li.status-edit-item span {
 	align-items: center;
 }
 
+.input-wrapper.input-hostname {
+	position: relative;
+}
+
+.input-wrapper .icon-secure,
+.input-wrapper .icon-insecure {
+	/*display: none;*/
+	position: absolute;
+	bottom: 6px;
+	right: 0;
+}
+.input-wrapper .icon-secure {
+	display: none;
+}
+.input-wrapper.secure .icon-secure {
+	display: unset;
+}
+
 /* ------------- */
 
 .status-list {

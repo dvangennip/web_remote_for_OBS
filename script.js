@@ -59,6 +59,8 @@ class OBS {
 
 		this.host                   = localStorage.getItem('host') || 'localhost:4444';
 		this.password               = localStorage.getItem('password') || '';
+		this.secure                 = false;
+		this.secure_host            = false;
 
 		this.edit_pane              = document.getElementById('obs_ws_connection_edit_list');
 		this.host_input             = document.getElementById('obs_ws_host');
@@ -69,7 +71,7 @@ class OBS {
 		this.host_input.value       = this.host;
 		this.password_input.value   = this.password;
 
-		// set up basic event handlers
+		// set up event handlers
 		this.obs.on('error', e => {
 			// this.connected = true;
 			console.error('socket error:', e);
@@ -87,18 +89,29 @@ class OBS {
 
 		this.obs.on('ConnectionClosed', () => {
 			console.log('Disconnected');
+			
 			if (this.auth_failure) {
 				this.message_output.innerHTML = `Not connected (over ${this.secure ? '' : 'in'}secure connection): connection closed after authentication failure.`;
 				this.message_output.classList.add('alert');
 			} else if (this.latest_connection_data && this.latest_connection_data.status == 'error') {
 				this.message_output.innerHTML = `Not connected (over ${this.secure ? '' : 'in'}secure connection): ${this.latest_connection_data.description}`;
+				
 				if (this.latest_connection_data.code == 'CONNECTION_ERROR'){
-					this.message_output.innerHTML += '<br/>Perhaps the host cannot be reached on this protocol and/or port.';
+					this.message_output.innerHTML += '<br/>If OBS is running on the host, perhaps it cannot be reached on this protocol and/or port.';
+					
+					if (location.protocol === 'https:' && !this.secure_host) {
+						this.message_output.innerHTML += '<br/>Your are connected securely to this page. Connecting to an insecure host may not be allowed by your browser security settings.';
+
+						if (this.secure)
+							this.message_output.innerHTML += ' Attempt to enforce a secure connection did not work.';
+					}
+
 					if (this.secure)
-						this.message_output.innerHTML += '<br/>Suggestion: attempt to prefix the host with <code>ws://</code> to enforce an insecure connection. Example: <code>ws://localhost:4444</code>';
+						this.message_output.innerHTML += '<br/>Suggestion: attempt to prefix the host with <code>ws://</code> to enforce an insecure connection (if the browser allows it). Example: <code>ws://localhost:4444</code>';
 					else
-						this.message_output.innerHTML += '<br/>Suggestion: attempt to prefix the host with <code>wss://</code> to enforce a secure connection. Example: <code>wss://localhost:4444</code>';
+						this.message_output.innerHTML += '<br/>Suggestion: attempt to prefix the host with <code>wss://</code> to enforce a secure connection (if the host supports it). Example: <code>wss://localhost:4444</code>';
 				}
+
 				this.message_output.classList.add('alert');
 			} else {
 				this.message_output.innerHTML = 'Not connected: connection closed.';
@@ -152,17 +165,46 @@ class OBS {
 		});
 
 		// set up connection pane
+		this.host_input.addEventListener('input',  this.on_host_input_change.bind(this));
+		this.host_input.addEventListener('change', this.on_host_input_change.bind(this));
+		this.on_host_input_change(); // trigger once to setup proper feedback
+
 		document.getElementById('btn_toggle_connect').addEventListener('click', this.toggle_form.bind(this));
 		this.connect_button.addEventListener('click', this.connect_form.bind(this));
 	}
 
-	// essentially just passed on to the internal obs.on function
+	// essentially just pass on to the internal obs.on function
 	on (event, func) {
 		this.obs.on(event, func);
 	}
 
 	toggle_form () {
 		this.edit_pane.classList.toggle('hidden');
+	}
+
+	on_host_input_change (e) {
+		let sec_check = this.check_secure_connection(this.host_input.value);
+
+		this.host_input.parentElement.classList.toggle('secure', sec_check.secure_host);
+	}
+
+	check_secure_connection (host) {
+		// to figure out whether we ought to connect securely, check details
+		//   note that when current connection to page is secure, some browsers will not allow insecure connections
+		//   thus, by default enforce secure connection if current page connection is secure
+		let secure      = location.protocol === 'https:' || host.endsWith(':443');
+		let secure_host = host.endsWith(':443');
+
+		// handle hosts that define the protocol
+		if (host.indexOf('://') !== -1) {
+			let url = new URL(host);
+			
+			secure = secure_host = url.protocol === 'wss:' || url.protocol === 'https:';
+
+			host = url.hostname + ':' + (url.port ? url.port : secure ? 443 : 80);
+		}
+
+		return {'secure': secure, 'secure_host': secure_host, 'host': host};
 	}
 
 	connect_form () {
@@ -179,28 +221,14 @@ class OBS {
 		}
 	}
 
-	async connect (host, password, secureConnection) {
-		this.host      = host || this.host;
-		this.password  = password || this.password;
+	async connect (host, password) {
+		this.host        = host || this.host;
+		this.password    = password || this.password;
 		
-		// to figure out whether we ought to connect securely, check details
-		this.secure    = false;
-		// make an exception for the GitHub demo as it's served over https but won't be secure if connecting to localhost
-		//   while this can be circumvented by adding ws:// or http:// in front of this.host, it would require additional work for new users
-		//   using a secure connection is still possible with the demo if wss:// or http:// protocol info is added
-		if (location.host == 'dvangennip.github.io')
-			this.secure = this.host.endsWith(':443');
-		else
-			this.secure = location.protocol === 'https:' || this.host.endsWith(':443');
-		
-		// handle hosts that define the protocol
-		if (this.host.indexOf('://') !== -1) {
-			let url = new URL(this.host);
-			
-			this.secure = url.protocol === 'wss:' || url.protocol === 'https:';
-			
-			this.host = url.hostname + ':' + (url.port ? url.port : this.secure ? 443 : 80);
-		}
+		let sec_check    = this.check_secure_connection(this.host);
+		this.secure      = sec_check.secure;
+		this.secure_host = sec_check.secure_host;
+		this.host        = sec_check.host;
 
 		console.log(`Connecting to ${this.host} (secure: ${this.secure}, password: ${this.password})`);
 		if (this.secure)

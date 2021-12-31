@@ -96,7 +96,7 @@
 					<path d="M14,14H19V16H16V19H14V14M5,14H10V19H8V16H5V14M8,5H10V10H5V8H8V5M19,8V10H14V5H16V8H19Z"></path>
 				</svg>
 			</button>
-			<button id="btn_toggle_connect" class="status-button small-button" title="Open connection pane">
+			<button id="btn_toggle_connect" class="status-button small-button" title="Toggle connection pane">
 				<svg viewBox="0 0 256 193" style="width:1rem; height:1rem; fill:currentColor;" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid">
 					<path d="M192.44 144.645h31.78V68.339l-35.805-35.804-22.472 22.472 26.497 26.497v63.14zm31.864 15.931H113.452L86.954 134.08l11.237-11.236 21.885 21.885h45.028l-44.357-44.441 11.32-11.32 44.357 44.358V88.296l-21.801-21.801 11.152-11.153L110.685 0H0l31.696 31.696v.084H97.436l23.227 23.227-33.96 33.96L63.476 65.74V47.712h-31.78v31.193l55.007 55.007L64.314 156.3l35.805 35.805H256l-31.696-31.529z"/>
 				</svg>
@@ -107,9 +107,17 @@
 		<li id="obs_ws_connection_edit_list" class="source-item status-edit-item">
 			<h4>Connection to OBS (via obs-websocket)</h4>
 			<div class="source-inputs">
-				<div class="input-wrapper">
+				<div class="input-wrapper input-hostname">
 					<label for="obs_ws_host">Host (e.g., localhost:4444)</label>
 					<input type="text" id="obs_ws_host" name="obs-ws-host" value="localhost:4444">
+					<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-insecure" title="Connection is not secure">
+						<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+						<path d="M7 11V7a5 5 0 019.9-1"></path>
+					</svg>
+					<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-secure" title="Connection is secure">
+						<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+						<path d="M7 11V7a5 5 0 0110 0v4"></path>
+					</svg>
 				</div>
 				<div class="input-wrapper">
 					<label for="obs_ws_password">Password</label>
