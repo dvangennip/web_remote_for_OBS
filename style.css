@@ -1044,7 +1044,7 @@ li.status-edit-item span {
 
 .status-item {
 	display: inline-flex;
-	margin: 0 10px;
+	padding: 0 10px;
 	user-select: none;
 	align-items: center;
 	color: #999;
@@ -1053,6 +1053,11 @@ li.status-edit-item span {
 
 .status-item.clickable {
 	cursor: pointer;
+}
+.status-item.clickable:hover,
+.status-item.clickable:active {
+	background-color: #444;
+	cursor: context-menu;
 }
 
 .status-item svg,
