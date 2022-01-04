@@ -3,6 +3,9 @@ Web remote UI for controlling [OBS Studio](https://obsproject.com/) via the [obs
 
 **[→ Use it online now](https://dvangennip.github.io/web_remote_for_OBS/)**
 
+## Screenshot
+![preview of the UI with status bar up top, scene views in the middle, and audio controls below that.](documents/web-remote-screenshot-v3.png "Web remote for OBS main user interface.")
+
 ## How to use
 1. Start [OBS](https://obsproject.com/) (v27.1.3). Make sure [obs-websocket plugin](https://github.com/obsproject/obs-websocket) is installed (v4.9.1).
 2. Point browser to [`index.html`](/index.html) (or use the link above)
@@ -29,8 +32,8 @@ Web remote UI for controlling [OBS Studio](https://obsproject.com/) via the [obs
 - Ability to edit text sources directly
 
 ## Notes and known issues
-- Some browsers won't allow insecure connections when the page itself is served securely. So the [page on GitHub]((https://dvangennip.github.io/obs_web_remote/)) may not work with a regular local instance of OBS.
-    - If so, try using another browser (like Firefox or Opera) or download this repo and run it locally.
+- Some browsers won't allow insecure connections when the page itself is served securely. So the [page on GitHub]((https://dvangennip.github.io/obs_web_remote/)) (which is served via `https`) may not work with a regular local instance of OBS.
+    - If so, try using another browser (Firefox or Opera seem to work), enable insecure connections within secure pages (not generally recommended) or download this repo and run it locally.
 - Currently not optimised for use on mobile devices.
 - Any scenes with `hidden` or `subscene` in their name are ignored and not shown in the scene list.
 - Audio list has space dedicated for visual audio volume meters, but that functionality is not yet available in obs-websocket.
