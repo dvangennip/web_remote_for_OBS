@@ -1,7 +1,7 @@
 # Web remote for OBS
 Web remote UI for controlling [OBS Studio](https://obsproject.com/) via the [obs-websocket plugin](https://github.com/obsproject/obs-websocket)
 
-**[→ Use it online now](https://dvangennip.github.io/obs_web_remote/)**
+**[→ Use it online now](https://dvangennip.github.io/web_remote_for_OBS/)**
 
 ## How to use
 1. Start [OBS](https://obsproject.com/) (v27.1.3). Make sure [obs-websocket plugin](https://github.com/obsproject/obs-websocket) is installed (v4.9.1).
