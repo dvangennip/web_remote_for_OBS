@@ -8,7 +8,7 @@ Web remote UI for controlling [OBS Studio](https://obsproject.com/) via the [obs
 
 ## How to use
 1. Start [OBS](https://obsproject.com/) (v27.1.3). Make sure [obs-websocket plugin](https://github.com/obsproject/obs-websocket) is installed (v4.9.1).
-2. Unless you're using the link above (skip to step 5), download or checkout this repository.
+2. Unless you're using the [Github instance](https://dvangennip.github.io/web_remote_for_OBS/) linked above (skip to step 5), download or checkout this repository.
 3. Start a webserver in the repo root folder (where `index.html` is located).
     - For example, using python: `python3 -m http.server`
     - You'll now have a webserver on `localhost:8080` (or any other port indicated)
