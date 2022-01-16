@@ -2,8 +2,8 @@
  * OBS_web_remote code
  */
 
-import OBS from './OBS.js';
-import OBSRemote from './OBSRemote.js';
+import WebRemoteConnection from './WebRemoteConnection.js';
+import WebRemote from './WebRemote.js';
 
 // ----------------------------------------------------------------------------
 
@@ -12,8 +12,8 @@ import OBSRemote from './OBSRemote.js';
  * Prevents problems with objects not loaded yet while trying to assign these.
  */
 window.addEventListener('pageshow', function () {
-    window.obs  = new OBS();
-    window.obsr = new OBSRemote();
+    window.wrc = new WebRemoteConnection();
+    window.wr  = new WebRemote();
 
-    window.setTimeout(obs.autoConnect.bind(obs), 1000);
+    window.setTimeout(wrc.autoConnect.bind(wrc), 1000);
 }, false);

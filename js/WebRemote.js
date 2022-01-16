@@ -2,7 +2,7 @@ import * as h from './helper.js';
 import SourceScene from './SourceScene.js';
 import SourceAudio from './SourceAudio.js';
 
-export default class OBSRemote {
+export default class WebRemote {
 	constructor () {
 		this.studio_mode        = false;
 		this.scene_list         = [];
@@ -84,30 +84,30 @@ export default class OBSRemote {
 		this.update_source_list();
 
 		// setup obs event handlers
-		obs.on('StudioModeSwitched',     this.on_studio_mode_switched.bind(this));
-		obs.on('SwitchScenes',           this.on_scene_changed.bind(this));
-		obs.on('PreviewSceneChanged',    this.on_preview_changed.bind(this));
+		wrc.on('StudioModeSwitched',     this.on_studio_mode_switched.bind(this));
+		wrc.on('SwitchScenes',           this.on_scene_changed.bind(this));
+		wrc.on('PreviewSceneChanged',    this.on_preview_changed.bind(this));
 
-		obs.on('ScenesChanged',          this.on_scenes_changed.bind(this));
-		obs.on('SourceCreated',          this.on_source_created.bind(this));
-		obs.on('SourceDestroyed',        this.on_source_destroyed.bind(this));
-		obs.on('SourceRenamed',          this.on_source_renamed.bind(this));
+		wrc.on('ScenesChanged',          this.on_scenes_changed.bind(this));
+		wrc.on('SourceCreated',          this.on_source_created.bind(this));
+		wrc.on('SourceDestroyed',        this.on_source_destroyed.bind(this));
+		wrc.on('SourceRenamed',          this.on_source_renamed.bind(this));
 
-		obs.on('StreamStarting',         this.on_stream_starting.bind(this));
-		obs.on('StreamStarted',          this.on_stream_started.bind(this));
-		obs.on('StreamStopping',         this.on_stream_stopping.bind(this));
-		obs.on('StreamStopped',          this.on_stream_stopped.bind(this));
-		obs.on('StreamStatus',           this.on_stream_status.bind(this));
+		wrc.on('StreamStarting',         this.on_stream_starting.bind(this));
+		wrc.on('StreamStarted',          this.on_stream_started.bind(this));
+		wrc.on('StreamStopping',         this.on_stream_stopping.bind(this));
+		wrc.on('StreamStopped',          this.on_stream_stopped.bind(this));
+		wrc.on('StreamStatus',           this.on_stream_status.bind(this));
 
-		obs.on('RecordingStarting',      this.on_recording_starting.bind(this));
-		obs.on('RecordingStarted',       this.on_recording_started.bind(this));
-		obs.on('RecordingStopping',      this.on_recording_stopping.bind(this));
-		obs.on('RecordingStopped',       this.on_recording_stopped.bind(this));
-		obs.on('RecordingPaused',        this.on_recording_paused.bind(this));
-		obs.on('RecordingResumed',       this.on_recording_resumed.bind(this));
+		wrc.on('RecordingStarting',      this.on_recording_starting.bind(this));
+		wrc.on('RecordingStarted',       this.on_recording_started.bind(this));
+		wrc.on('RecordingStopping',      this.on_recording_stopping.bind(this));
+		wrc.on('RecordingStopped',       this.on_recording_stopped.bind(this));
+		wrc.on('RecordingPaused',        this.on_recording_paused.bind(this));
+		wrc.on('RecordingResumed',       this.on_recording_resumed.bind(this));
 
-		obs.on('VirtualCamStarted',      this.on_virtualcam_started.bind(this));
-		obs.on('VirtualCamStopped',      this.on_virtualcam_stopped.bind(this));
+		wrc.on('VirtualCamStarted',      this.on_virtualcam_started.bind(this));
+		wrc.on('VirtualCamStopped',      this.on_virtualcam_stopped.bind(this));
 	}
 
 	on_connected () {
@@ -140,12 +140,12 @@ export default class OBSRemote {
 
 	is_connection_open () {
 		// TODO return true if connected but false if in the midst of scenecollection or profile change
-		return obs.connected;
+		return wrc.connected;
 	}
 
 	async get_video_info () {
 		// get aspect ratio
-		let response = await obs.sendCommand('GetVideoInfo');
+		let response = await wrc.sendCommand('GetVideoInfo');
 
 		if (response && response.status == 'ok') {
 			this.video_width  = response['baseWidth'];
@@ -185,7 +185,7 @@ export default class OBSRemote {
 	}
 
 	async get_studio_mode () {
-		let response = await obs.sendCommand('GetStudioModeStatus');
+		let response = await wrc.sendCommand('GetStudioModeStatus');
 
 		this.studio_mode = (response && response.studioMode) || false;
 		
@@ -215,11 +215,11 @@ export default class OBSRemote {
 		this.studio_mode = !this.studio_mode;
 		this.update_studio_mode();
 		
-		await obs.sendCommand('ToggleStudioMode');
+		await wrc.sendCommand('ToggleStudioMode');
 	}
 
 	async get_scene_list () {
-		let response = await obs.sendCommand('GetSceneList');
+		let response = await wrc.sendCommand('GetSceneList');
 
 		// update scenes but skip hidden scenes (any with 'subscene' or 'hidden' in the name)
 		this.scene_list = response['scenes'].filter(function (i) {
@@ -284,14 +284,14 @@ export default class OBSRemote {
 	}
 
 	async get_program_scene () {
-		let response = await obs.sendCommand('GetCurrentScene');
+		let response = await wrc.sendCommand('GetCurrentScene');
 
 		// this.scene_program = response['name'];
 		this.on_scene_changed({'scene-name': response['name']});
 	}
 
 	async get_preview_scene () {
-		let response = await obs.sendCommand('GetPreviewScene');
+		let response = await wrc.sendCommand('GetPreviewScene');
 
 		this.on_preview_changed({'scene-name': response['name']});
 	}
@@ -367,7 +367,7 @@ export default class OBSRemote {
 
 	async transition () {
 		if (this.studio_mode) {
-			await obs.sendCommand('TransitionToProgram');
+			await wrc.sendCommand('TransitionToProgram');
 		}
 	}
 
@@ -375,7 +375,7 @@ export default class OBSRemote {
 		// first, check suitable input typeIDs versus master list
 		let suitable_audio_typeIds = [];
 
-		let types_response = await obs.sendCommand('GetSourceTypesList');
+		let types_response = await wrc.sendCommand('GetSourceTypesList');
 
 		if (types_response && types_response.status == 'ok') {
 			for (var i = 0; i < types_response.types.length; i++) {
@@ -391,7 +391,7 @@ export default class OBSRemote {
 		// second, get special sources list as those are sceneless
 		let special_sources = [];
 
-		let special_sources_response = await obs.sendCommand('GetSpecialSources');
+		let special_sources_response = await wrc.sendCommand('GetSpecialSources');
 
 		if (special_sources_response && special_sources_response.status == 'ok') {
 			for (let key in special_sources_response) {
@@ -402,7 +402,7 @@ export default class OBSRemote {
 		}
 
 		// now get to checking all sources
-		let response = await obs.sendCommand('GetSourcesList');
+		let response = await wrc.sendCommand('GetSourcesList');
 
 		let current_audio_names = [];
 		
@@ -470,7 +470,7 @@ export default class OBSRemote {
 		let all_inputs = document.getElementsByTagName('input');
 
 		for (var i = 0; i < all_inputs.length; i++) {
-			let ix = all_inputs[i].getAttribute('data-obsr-source');
+			let ix = all_inputs[i].getAttribute('data-wr-source');
 
 			if (ix != null)
 				input_list.push(all_inputs[i]);
@@ -480,7 +480,7 @@ export default class OBSRemote {
 		let all_select_els = document.getElementsByTagName('select');
 
 		for (var j = 0; j < all_select_els.length; j++) {
-			let sx = all_select_els[j].getAttribute('data-obsr-selector');
+			let sx = all_select_els[j].getAttribute('data-wr-selector');
 
 			if (sx != null)
 				select_list.push(all_select_els[j]);
@@ -496,7 +496,7 @@ export default class OBSRemote {
 
 		// set up select elements
 		select_list.forEach((item) => {
-			let sources = item.getAttribute('data-obsr-selector').split('|');
+			let sources = item.getAttribute('data-wr-selector').split('|');
 
 			item.addEventListener('change', function (e) {
 				var values = e.target.value.split('|');
@@ -519,11 +519,11 @@ export default class OBSRemote {
 	}
 
 	async set_text (inSource, inText) {
-		await obs.sendCommand('SetTextFreetype2Properties', {'source': inSource, 'text': inText});
+		await wrc.sendCommand('SetTextFreetype2Properties', {'source': inSource, 'text': inText});
 	}
 
 	async update_status_list () {
-		let response = await obs.sendCommand('GetStreamingStatus');
+		let response = await wrc.sendCommand('GetStreamingStatus');
 
 		if (response.status == 'ok') {
 			this.streaming        = response.streaming;
@@ -552,7 +552,7 @@ export default class OBSRemote {
 			}
 		}
 		
-		let response2 = await obs.sendCommand('GetStats');
+		let response2 = await wrc.sendCommand('GetStats');
 		// use 'average-frame-time' 
 
 		if (response2.status == 'ok') {
@@ -582,7 +582,7 @@ export default class OBSRemote {
 
 	update_status_clock () {
 		this.clock_text.innerHTML = (new Date()).toLocaleTimeString('nl-NL');  // 24 hour format
-		this.clock.classList.toggle('alert', !obs.connected);
+		this.clock.classList.toggle('alert', !wrc.connected);
 	}
 
 	setup_checklist () {
@@ -646,12 +646,12 @@ export default class OBSRemote {
 
 	async start_streaming () {
 		if (!this.streaming)
-			await obs.sendCommand('StartStreaming');
+			await wrc.sendCommand('StartStreaming');
 	}
 
 	async stop_streaming () {
 		if (this.streaming)
-			await obs.sendCommand('StopStreaming');
+			await wrc.sendCommand('StopStreaming');
 	}
 
 	on_stream_starting () {
@@ -705,22 +705,22 @@ export default class OBSRemote {
 
 	async start_recording () {
 		if (!this.recording)
-			await obs.sendCommand('StartRecording');
+			await wrc.sendCommand('StartRecording');
 	}
 
 	async pause_recording () {
 		if (this.recording && !this.recording_paused)
-			await obs.sendCommand('PauseRecording')
+			await wrc.sendCommand('PauseRecording')
 	}
 
 	async resume_recording () {
 		if (this.recording && this.recording_paused)
-			await obs.sendCommand('ResumeRecording')
+			await wrc.sendCommand('ResumeRecording')
 	}
 
 	async stop_recording () {
 		if (this.recording)
-			await obs.sendCommand('StopRecording');
+			await wrc.sendCommand('StopRecording');
 	}
 
 	on_recording_starting () {
@@ -812,7 +812,7 @@ export default class OBSRemote {
 	}
 
 	async get_virtualcam_status () {
-		let response = await obs.sendCommand('GetVirtualCamStatus');
+		let response = await wrc.sendCommand('GetVirtualCamStatus');
 
 		if (response.status == 'ok') {
 			this.virtualcam_active = response['isVirtualCam'];
@@ -829,11 +829,11 @@ export default class OBSRemote {
 	}
 
 	async start_virtualcam () {
-		await obs.sendCommand('StartVirtualCam');
+		await wrc.sendCommand('StartVirtualCam');
 	}
 
 	async stop_virtualcam () {
-		await obs.sendCommand('StopVirtualCam');
+		await wrc.sendCommand('StopVirtualCam');
 	}
 
 	on_virtualcam_started () {
@@ -857,7 +857,7 @@ export default class OBSRemote {
 	}
 
 	async update_outputs () {
-		let response = await obs.sendCommand('ListOutputs');
+		let response = await wrc.sendCommand('ListOutputs');
 
 		let active_outputs = 0;
 		this.outputs       = [];

@@ -5,8 +5,8 @@ export default class SourceScene {
 		this.index       = index;
 		this.name        = name;
 		this.last_update = 9999999; // improbably high number
-		this.is_program  = obsr.scene_program === name;
-		this.is_preview  = obsr.scene_preview === name;
+		this.is_program  = wr.scene_program === name;
+		this.is_preview  = wr.scene_preview === name;
 
 		// create elements
 		this.el          = h.NewElement('li', {
@@ -35,7 +35,7 @@ export default class SourceScene {
 		this.el.appendChild(this.label);
 
 		// get initial state set up
-		this.el.style.aspectRatio = obsr.aspect_ratio;
+		this.el.style.aspectRatio = wr.aspect_ratio;
 		this.set_screenshot();
 	}
 
@@ -105,20 +105,20 @@ export default class SourceScene {
 	}
 
 	async set_scene (forceCurrentScene) {
-		let cmd = (obsr.studio_mode) ? 'SetPreviewScene' : 'SetCurrentScene';
+		let cmd = (wr.studio_mode) ? 'SetPreviewScene' : 'SetCurrentScene';
 		
 		if (forceCurrentScene) {
 			cmd = 'SetCurrentScene';
 		}
 
-		await obs.sendCommand(cmd, {'scene-name': this.name});
+		await wrc.sendCommand(cmd, {'scene-name': this.name});
 	}
 
 	async set_screenshot () {
 		let img_width  = (this.el.offsetWidth > 0) ? this.el.offsetWidth : 250;
-		let img_height = (1 / obsr.aspect_ratio) * img_width;
+		let img_height = (1 / wr.aspect_ratio) * img_width;
 
-		let response = await obs.sendCommand('TakeSourceScreenshot', {
+		let response = await wrc.sendCommand('TakeSourceScreenshot', {
 			'sourceName': this.name,
 			'embedPictureFormat': 'jpg',
 			'width': img_width,

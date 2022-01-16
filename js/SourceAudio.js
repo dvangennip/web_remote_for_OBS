@@ -123,24 +123,24 @@ export default class SourceAudio {
 		this.get_source_filters();
 
 		// handle relevant events
-		obs.on('SourceVolumeChanged',           this.on_volume_changed.bind(this));
-		obs.on('SourceMuteStateChanged',        this.on_mute_state_changed.bind(this));
-		obs.on('SourceAudioActivated',          (e) => {console.log(e, e['sourceName']);});
-		obs.on('SourceAudioDeactivated',        (e) => {console.log(e, e['sourceName']);});
+		wrc.on('SourceVolumeChanged',           this.on_volume_changed.bind(this));
+		wrc.on('SourceMuteStateChanged',        this.on_mute_state_changed.bind(this));
+		wrc.on('SourceAudioActivated',          (e) => {console.log(e, e['sourceName']);});
+		wrc.on('SourceAudioDeactivated',        (e) => {console.log(e, e['sourceName']);});
 		
-		obs.on('SourceAudioMixersChanged',      this.on_tracks_changed.bind(this));
+		wrc.on('SourceAudioMixersChanged',      this.on_tracks_changed.bind(this));
 
 		//SourceCreated + SourceDestroyed (handle externally?)
-		obs.on('SourceRenamed',                 this.on_source_renamed.bind(this));
+		wrc.on('SourceRenamed',                 this.on_source_renamed.bind(this));
 
-		obs.on('SceneItemVisibilityChanged',    this.on_visibility_changed.bind(this));
+		wrc.on('SceneItemVisibilityChanged',    this.on_visibility_changed.bind(this));
 
-		obs.on('SourceFilterAdded',             this.on_filter_added.bind(this));
-		obs.on('SourceFilterRemoved',           this.on_filter_removed.bind(this));
-		obs.on('SourceFiltersReordered',        this.on_filters_reordered.bind(this));
-		obs.on('SourceFilterVisibilityChanged', this.on_filter_visibility_changed.bind(this));
+		wrc.on('SourceFilterAdded',             this.on_filter_added.bind(this));
+		wrc.on('SourceFilterRemoved',           this.on_filter_removed.bind(this));
+		wrc.on('SourceFiltersReordered',        this.on_filters_reordered.bind(this));
+		wrc.on('SourceFilterVisibilityChanged', this.on_filter_visibility_changed.bind(this));
 
-		obs.on('SwitchScenes',                  this.on_scene_changed.bind(this));
+		wrc.on('SwitchScenes',                  this.on_scene_changed.bind(this));
 	}
 
 	get_element () {
@@ -234,7 +234,7 @@ export default class SourceAudio {
 	}
 
 	async get_volume () {
-		let response = await obs.sendCommand('GetVolume', {'source': this.name});
+		let response = await wrc.sendCommand('GetVolume', {'source': this.name});
 		
 		if (response.status == 'ok') {
 			this.volume = response.volume;
@@ -245,7 +245,7 @@ export default class SourceAudio {
 	}
 
 	set_volume () {
-		obs.sendCommand('SetVolume', {'source': this.name, 'volume': this.volume});
+		wrc.sendCommand('SetVolume', {'source': this.name, 'volume': this.volume});
 		
 		// this.update_state();
 	}
@@ -260,11 +260,11 @@ export default class SourceAudio {
 	}
 
 	set_mute () {
-		obs.sendCommand('SetMute', {'source': this.name, 'mute': this.muted});
+		wrc.sendCommand('SetMute', {'source': this.name, 'mute': this.muted});
 	}
 
 	async toggle_mute () {
-		await obs.sendCommand('ToggleMute', {'source': this.name});
+		await wrc.sendCommand('ToggleMute', {'source': this.name});
 
 		// this.update_state();
 	}
@@ -283,7 +283,7 @@ export default class SourceAudio {
 
 		if (this.in_scene) {
 			// omitted: 'scene-name': scene, 
-			let response = await obs.sendCommand('GetSceneItemProperties', {'item': this.name});
+			let response = await wrc.sendCommand('GetSceneItemProperties', {'item': this.name});
 
 			if (response && response.status == 'ok') {
 				visible = response['visible'];
@@ -297,7 +297,7 @@ export default class SourceAudio {
 
 	set_visibility (state) {
 		// omitted: 'scene-name': scene, 
-		obs.sendCommand('SetSceneItemRender', {'source': this.name, 'render': state});
+		wrc.sendCommand('SetSceneItemRender', {'source': this.name, 'render': state});
 	}
 
 	on_visibility_changed (e) {
@@ -319,8 +319,8 @@ export default class SourceAudio {
 	async get_active () {
 		// TODO GetAudioActive is not the same as active in scene
 		// audioActive is true even if not in program scene, but false when muted or not playing
-		let response_s =  await obs.sendCommand('GetSourceActive', {'sourceName': this.name});
-		let response_a =  await obs.sendCommand('GetAudioActive',  {'sourceName': this.name});
+		let response_s =  await wrc.sendCommand('GetSourceActive', {'sourceName': this.name});
+		let response_a =  await wrc.sendCommand('GetAudioActive',  {'sourceName': this.name});
 
 		if (response_s && response_s.status == 'ok' && response_a && response_a.status == 'ok') {
 			this.active = (response_s.sourceActive && response_a.audioActive);
@@ -330,7 +330,7 @@ export default class SourceAudio {
 	}
 
 	async get_tracks () {
-		let response =  await obs.sendCommand('GetAudioTracks', {'sourceName': this.name});
+		let response =  await wrc.sendCommand('GetAudioTracks', {'sourceName': this.name});
 
 		if (response && response.status == 'ok') {
 			for (let i = 1; i < 7; i++) {
@@ -340,7 +340,7 @@ export default class SourceAudio {
 	}
 
 	async set_track (track_index, state) {
-		let response = await obs.sendCommand('SetAudioTracks', {'sourceName': this.name, 'track': track_index, 'active': state});
+		let response = await wrc.sendCommand('SetAudioTracks', {'sourceName': this.name, 'track': track_index, 'active': state});
 
 		if (response && response.status == 'ok') {
 			this.tracks[track_index-1].classList.toggle('enabled', state);
@@ -398,7 +398,7 @@ export default class SourceAudio {
 	}
 
 	async get_source_filters () {
-		let response = await obs.sendCommand('GetSourceFilters', {'sourceName': this.name});
+		let response = await wrc.sendCommand('GetSourceFilters', {'sourceName': this.name});
 		
 		if (response && response.status == 'ok') {
 			for (var i = 0; i < response.filters.length; i++) {

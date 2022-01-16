@@ -1,4 +1,4 @@
-export default class OBS {
+export default class WebRemoteConnection {
 	constructor () {
 		this.connected              = false;
 		this.authenticated          = false;
@@ -81,7 +81,7 @@ export default class OBS {
 
 			this.edit_pane.classList.remove('hidden');
 
-			obsr.on_disconnected();
+			wr.on_disconnected();
 		});
 
 		this.obs.on('AuthenticationFailure', async () => {
@@ -95,7 +95,7 @@ export default class OBS {
 
 			this.edit_pane.classList.remove('hidden');
 
-			obsr.on_disconnected();
+			wr.on_disconnected();
 		});
 
 		this.obs.on('AuthenticationSuccess', async () => {
@@ -114,8 +114,8 @@ export default class OBS {
 
 			this.edit_pane.classList.add('hidden');
 			
-			// trigger update processes in OBSRemote
-			obsr.on_connected();
+			// trigger update processes in WebRemote
+			wr.on_connected();
 		});
 
 		// set up connection pane

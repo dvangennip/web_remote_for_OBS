@@ -405,18 +405,18 @@ export default class SourceFilter {
 	}
 
 	async set_visibility () {
-		await obs.sendCommand('SetSourceFilterVisibility', {'sourceName': this.source.name, 'filterName': this.name, 'filterEnabled': this.enabled});
+		await wrc.sendCommand('SetSourceFilterVisibility', {'sourceName': this.source.name, 'filterName': this.name, 'filterEnabled': this.enabled});
 	}
 
 	async set_filter_setting (inSetting, inValue) {
 		var key_value_pair = {};
 		key_value_pair[inSetting] = inValue;
 
-		await obs.sendCommand('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair});
+		await wrc.sendCommand('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair});
 	}
 
 	async get_filter_settings () {
-		let response = await obs.sendCommand('GetSourceFilterInfo', {'sourceName': this.source.name, 'filterName': this.name});
+		let response = await wrc.sendCommand('GetSourceFilterInfo', {'sourceName': this.source.name, 'filterName': this.name});
 
 		if (response && response.status == 'ok') {
 			// set enabled state
