@@ -3,7 +3,7 @@ import SourceFilter from './SourceFilter.js';
 import { Fader } from './Sliders.js';
 
 export default class SourceAudio {
-	constructor (inSource, is_sceneless) {
+	constructor (inSource, is_sceneless = false) {
 		this.source      = inSource;
 		this.name        = inSource.name;
 		this.slug        = h.get_slug(inSource.name);
@@ -18,7 +18,7 @@ export default class SourceAudio {
 		this.filters     = [];
 		this.last_update = 9999999; // improbably high number
 		this.in_scene    = false;
-		this.sceneless   = is_sceneless || false;
+		this.sceneless   = is_sceneless;
 
 		// create elements
 		this.el                = h.NewElement('li',     {'className': 'audio-item', 'id': 'audio_item_' + this.slug});

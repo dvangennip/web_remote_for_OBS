@@ -48,10 +48,10 @@ It's possible to add inputs to directly edit text sources in OBS. By adding `inp
 
 - Text inputs
     - These edit text sources in OBS.
-    - Make sure the `input` element has an attribute `data-obsr-source` and matching `id` and `name` values that reflect the source name in OBS.
+    - Make sure the `input` element has an attribute `data-wr-source` and matching `id` and `name` values that reflect the source name in OBS.
 - Select elements
     - Handy to select a preset for multiple text sources in one go.
-    - Requires a `data-obsr-selector` attribute to work. Its value should be the source names it feeds into (multiple are split with a `|` character).
+    - Requires a `data-wr-selector` attribute to work. Its value should be the source names it feeds into (multiple are split with a `|` character).
 
 See the HTML code below for an example:
 
@@ -62,19 +62,19 @@ See the HTML code below for an example:
     <div class="source-inputs">
         <div class="input-wrapper">
             <label for="LT-name">Name</label>
-            <input type="text" id="LT-name" name="LT-name" data-obsr-source="LT-name">
+            <input type="text" id="LT-name" name="LT-name" data-wr-source="LT-name">
         </div>
         <div class="input-wrapper">
             <label for="LT-role">Role</label>
-            <input type="text" id="LT-role" name="LT-role" data-obsr-source="LT-role">
+            <input type="text" id="LT-role" name="LT-role" data-wr-source="LT-role">
         </div>
         <div class="input-wrapper">
             <label for="LT-affiliation">Affiliation</label>
-            <input type="text" id="LT-affiliation" name="LT-affiliation" data-obsr-source="LT-affiliation">
+            <input type="text" id="LT-affiliation" name="LT-affiliation" data-wr-source="LT-affiliation">
         </div>
         <div class="input-wrapper">
             <label for="LT-select">Select from preset list</label>
-            <select id="LT-select" name="LT-select" data-obsr-selector="LT-name|LT-role|LT-affiliation">
+            <select id="LT-select" name="LT-select" data-wr-selector="LT-name|LT-role|LT-affiliation">
                 <option value="-|-|-">No name chosen</option>
                 <option value="Some name|Fake role|Fake unit">Some name</option>
                 <option value="Another person|Another role|Affiliation">Another person</option>
