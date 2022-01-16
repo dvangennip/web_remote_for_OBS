@@ -5,3 +5,5 @@ package-lock.json
 node_modules*
 archive*
 
+web_remote_for_OBS.sublime-project
+web_remote_for_OBS.sublime-workspace

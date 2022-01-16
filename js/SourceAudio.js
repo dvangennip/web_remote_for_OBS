@@ -1,6 +1,6 @@
 import * as h from './helper.js';
 import SourceFilter from './SourceFilter.js';
-import Fader from './Fader.js';
+import { Fader } from './Sliders.js';
 
 export default class SourceAudio {
 	constructor (inSource, is_sceneless) {

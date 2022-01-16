@@ -1,5 +1,5 @@
 import * as h from './helper.js';
-import Slider from './Slider.js';
+import { Slider } from './Sliders.js';
 
 export default class SourceFilter {
 	constructor (inSource, inFilter) {
