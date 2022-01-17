@@ -116,6 +116,14 @@ export default class SourceFilter {
 			case 'ndi_audiofilter':
 				this.settings['ndi_filter_ndiname'] = 'Dedicated NDI Audio output'
 				break;
+			case 'stereo_pan_filter':
+				this.settings['gainL']           = 0;     // [-80,30] dB
+				this.settings['panL']            = -100;  // [-100,100]
+				this.settings['invertL']         = false; // [true|false]
+				this.settings['gainR']           = 0;     // [-80,30] dB
+				this.settings['panR']            = 100;   // [-100,100]
+				this.settings['invertR']         = false; // [true|false]
+				break;
 			case 'vst_filter':
 			case 'invert_polarity_filter':
 			default:
@@ -178,11 +186,35 @@ export default class SourceFilter {
 					step = 0.1;
 					unit = 'dB';
 					break;
+				case 'gainL':
+					min   = -80;
+					max   = 30;
+					unit  = 'dB';
+					label = 'gain_left';
+					break;
+				case 'gainR':
+					min   = -80;
+					max   = 30;
+					unit  = 'dB';
+					label = 'gain_right';
+					break;
 				case 'db':
 					min  = -30;
 					max  = 30;
 					step = 0.1;
 					unit = 'dB';
+					break;
+				case 'panL':
+					min   = -100;
+					max   = 100;
+					unit  = '';
+					label = 'pan_left';
+					break;
+				case 'panR':
+					min   = -100;
+					max   = 100;
+					unit  = '';
+					label = 'pan_right';
 					break;
 				case 'volume':
 					max = 100;
@@ -232,6 +264,20 @@ export default class SourceFilter {
 					label   = 'volume_linked';
 					options = [false,true];
 					labels  = ['Independent','Linked to source'];
+					break;
+				case 'invertL':
+					unit    = '';
+					format  = 'boolean';
+					label   = 'invert_left';
+					options = [false,true];
+					labels  = ['Not inverted','Inverted'];
+					break;
+				case 'invertR':
+					unit    = '';
+					format  = 'boolean';
+					label   = 'invert_right';
+					options = [false,true];
+					labels  = ['Not inverted','Inverted'];
 					break;
 				case 'ndi_filter_ndiname':
 					unit   = '';

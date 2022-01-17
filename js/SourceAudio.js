@@ -411,14 +411,16 @@ export default class SourceAudio {
 					case 'expander_filter':
 					case 'gain_filter':
 					case 'async_delay_filter':
-					case 'audio_monitor':
 					case 'ndi_audiofilter':
 					case 'vst_filter':
-					case 'invert_polarity_filter': {
+					case 'invert_polarity_filter':
+					case 'audio_monitor':
+					case 'stereo_pan_filter': {
 						this.add_filter(response.filters[i]);
 						break;
 					}
 					default:  // do nothing for types not handled above
+						// console.log(response.filters[i])
 						break;
 				}
 			}
