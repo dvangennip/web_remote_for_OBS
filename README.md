@@ -8,6 +8,7 @@ Web remote UI for controlling [OBS Studio](https://obsproject.com/) via the [obs
 
 ## How to use
 1. Start [OBS](https://obsproject.com/) (v27.1.3). Make sure [obs-websocket plugin](https://github.com/obsproject/obs-websocket) is installed (v4.9.1).
+> **OBS 28 or newer:** The built-in WebSocket server is not compatible with this client. See the [legacy WebSocket section](#obs-30-on-ubuntu-2404-legacy-websocket-v4).
 2. Unless you're using the [Github instance](https://dvangennip.github.io/web_remote_for_OBS/) linked above (skip to step 5), download or checkout this repository.
 3. Start a webserver in the repo root folder (where `index.html` is located).
     - For example, using python: `python3 -m http.server`
@@ -84,6 +85,10 @@ See the HTML code below for an example:
 </li>
 <!-- </ul> -->
 ````
+## OBS 30 on Ubuntu 24.04 (legacy WebSocket v4)
+This remote uses the obs-websocket 4.x protocol. OBS 30 includes obs-websocket 5.x, which uses a different protocol; the built-in server on port 4455 cannot be used with this client. A tested Ubuntu 24.04 setup uses the separate obs-websocket 4.9.1-compat plugin. This does not add v5 support to the client.
+
+See the [English setup guide](docs/obs30-ubuntu2404.md) or the [guia em português (Brasil)](docs/obs30-ubuntu2404-pt-BR.md). These guides describe one tested environment rather than guaranteed compatibility with every OBS or Ubuntu build.
 
 ## License
 - [Unlicense](https://unlicense.org/): This is free and unencumbered software released into the public domain.
