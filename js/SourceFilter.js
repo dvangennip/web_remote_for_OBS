@@ -14,6 +14,7 @@ export default class SourceFilter {
 		this.remote_settings = this.filter.filterSettings || this.filter.settings || {};
 		this.settings       = {};
 		this.settings_items = {};
+		this.key_color_el   = null;  // wrapper of the key colour picker, when there is one
 
 		this.el = h.NewElement('div', {
 			'id'       : 'source_' + this.source_slug + '_filter_' + this.name,
@@ -125,6 +126,53 @@ export default class SourceFilter {
 				break;
 			case 'vst_filter':
 			case 'invert_polarity_filter':
+			// Chroma key and colour key. luma_key_filter and luma_key_filter_v2 are
+			// deliberately absent: they take a different key set (luma_min, luma_max,
+			// luma_type) and are out of scope, not another gap waiting to be filled.
+			// Defaults come from OBS's own property definitions, per kind.
+			case 'chroma_key_filter_v2':
+				this.settings['key_color_type'] = 'green';  // green|blue|magenta|custom
+				this.settings['key_color']      = 65280;    // 0x00FF00 = green, 0xAABBGGRR
+				this.settings['similarity']     = 400;      // [1-1000]
+				this.settings['smoothness']     = 80;       // [1-1000]
+				this.settings['spill']          = 100;      // [1-1000]
+				this.settings['opacity']        = 1;        // [0.0-1.0]
+				this.settings['contrast']       = 0;        // [-4.0-4.0]
+				this.settings['brightness']     = 0;        // [-1.0-1.0]
+				this.settings['gamma']          = 0;        // [-1.0-1.0]
+				break;
+			case 'chroma_key_filter':
+				this.settings['key_color_type'] = 'green';
+				this.settings['key_color']      = 65280;
+				this.settings['similarity']     = 400;
+				this.settings['smoothness']     = 80;
+				this.settings['spill']          = 100;
+				this.settings['opacity']        = 100;      // v1 stores [0-100] int
+				this.settings['contrast']       = 0;        // [-1.0-1.0] on v1
+				this.settings['brightness']     = 0;
+				this.settings['gamma']          = 0;
+				break;
+			case 'color_key_filter_v2':
+				// no spill on colour key, and red is a preset here
+				this.settings['key_color_type'] = 'green';  // green|blue|red|magenta|custom
+				this.settings['key_color']      = 65280;
+				this.settings['similarity']     = 80;
+				this.settings['smoothness']     = 50;
+				this.settings['opacity']        = 1;        // [0.0-1.0]
+				this.settings['contrast']       = 0;        // [-4.0-4.0]
+				this.settings['brightness']     = 0;
+				this.settings['gamma']          = 0;
+				break;
+			case 'color_key_filter':
+				this.settings['key_color_type'] = 'green';
+				this.settings['key_color']      = 65280;
+				this.settings['similarity']     = 80;
+				this.settings['smoothness']     = 50;
+				this.settings['opacity']        = 100;      // v1 stores [0-100] int
+				this.settings['contrast']       = 0;        // [-1.0-1.0] on v1
+				this.settings['brightness']     = 0;
+				this.settings['gamma']          = 0;
+				break;
 			default:
 				// no settings reecorded for these
 				break;
@@ -133,7 +181,9 @@ export default class SourceFilter {
 		// merge actual settings with defaults generated above
 		//   any setting left to its default is not transmitted, hence the need to include defaults above
 		for (let key in this.settings) {
-			if (this.remote_settings[key]) {
+			// presence test, not truthiness: a remote 0 or false is a real value
+			// (spill: 0 and opacity: 0 are both meaningful here)
+			if (key in this.remote_settings) {
 				this.settings[key] = this.remote_settings[key];
 			}
 		}
@@ -283,10 +333,72 @@ export default class SourceFilter {
 					format = 'string';
 					label  = 'ndi_output_name'
 					break;
+				// Chroma key / colour key. Ranges are OBS's own property ranges;
+				// a stored value outside one is never truncated to fit (see below).
+				case 'similarity':
+				case 'smoothness':
+					min  = 1;
+					max  = 1000;
+					step = 1;
+					unit = '';
+					break;
+				case 'spill':
+					min  = 1;
+					max  = 1000;
+					step = 1;
+					unit = '';
+					break;
+				case 'contrast':
+					min  = (this.type.slice(-3) === '_v2') ? -4 : -1;
+					max  = (this.type.slice(-3) === '_v2') ?  4 :  1;
+					step = 0.01;
+					unit = '';
+					break;
+				case 'brightness':
+				case 'gamma':
+					min  = -1;
+					max  = 1;
+					step = 0.01;
+					unit = '';
+					break;
+				case 'opacity':
+					// shown as a percentage for both versions; the stored scale
+					// differs (see opacity_to_percent/from_percent). Other kinds that
+					// carry an opacity keep their old 0-1 slider.
+					if (this.is_key_filter()) {
+						min  = 0;
+						max  = 100;
+						step = 1;
+						unit = '%';
+					} else {
+						step = 'any';
+					}
+					break;
+				case 'key_color_type':
+					unit   = '';
+					format = 'select';
+					// colour key has a red preset too; chroma key does not
+					if (this.type.indexOf('color_key_filter') === 0) {
+						options = ['green','blue','red','magenta','custom'];
+						labels  = ['Green','Blue','Red','Magenta','Custom'];
+					} else {
+						options = ['green','blue','magenta','custom'];
+						labels  = ['Green','Blue','Magenta','Custom'];
+					}
+					break;
+				case 'key_color':
+					unit   = '';
+					format = 'color';
+					break;
 				default:
 					step = 'any';
 					break;
 			}
+
+			// Never truncate a value this pane did not create: if OBS reports one
+			// outside the property range, widen the slider so it still represents it.
+			if (typeof v == 'number' && v < min) min = v;
+			if (typeof v == 'number' && v > max) max = v;
 
 			// wrapper
 			var s_el = h.NewElement('div', {
@@ -303,17 +415,24 @@ export default class SourceFilter {
 
 			if (format == 'number') {
 				input_item = new Slider('filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key + '_unit_label',min,max,step,unit,label);
-				input_item.set(v);
+				// opacity is shown as a percentage whatever scale the kind stores
+				input_item.set((key === 'opacity') ? this.opacity_to_percent(v) : v);
 
 				input_el = input_item.get_element();
 
 				input_el.addEventListener('change', (e) =>  {
+					let value = e.value;
+
+					// translate the percentage back into this kind's own scale
+					if (e.setting === 'opacity')
+						value = this.opacity_from_percent(value);
+
 					// update in internal data if changed
-					if (this.settings[e.setting] != e.value) {
-						this.settings[e.setting] = e.value;
+					if (this.settings[e.setting] != value) {
+						this.settings[e.setting] = value;
 
 						// request remote update
-						this.set_filter_setting(e.setting, e.value);
+						this.set_filter_setting(e.setting, value);
 					}
 				});
 			} else if (format == 'string') {
@@ -341,6 +460,40 @@ export default class SourceFilter {
 						}.bind(this)
 					}
 				});
+			} else if (format == 'color') {
+				input_item = input_el = h.NewElement('input', {
+					'id'              : 'filter_' + this.source_slug + '_type_' + this.type + '_setting_' + key,
+					'name'            : 'filter-' + this.source_slug + '-type-' + this.type + '-setting-' + key,
+					'type'            : 'color',
+					'value'           : h.obsColorToRgb(v),
+					'data-unit'       : unit,
+					'data-setting'    : key,
+					'data-source'     : this.source,
+					'data-source-slug': this.source_slug,
+					'data-filter'     : this.name,
+					'data-format'     : format,
+					'events'          : {
+						'input': function (e) {
+							let color = h.rgbToObsColor(e.target.value, this.settings['key_color']);
+
+							this.settings['key_color']      = color;
+							this.settings['key_color_type'] = 'custom';
+
+							// switching the type to custom first makes the picker
+							// visible, just as OBS does
+							this.sync_key_color_type();
+
+							// OBS overwrites key_color with the preset unless the type
+							// is custom, so both have to travel in the same request
+							this.set_filter_settings({'key_color_type': 'custom', 'key_color': color});
+						}.bind(this)
+					}
+				});
+
+				// OBS hides the colour picker unless the type is custom; mirror that
+				this.key_color_el = s_el;
+				if (this.settings['key_color_type'] !== 'custom')
+					s_el.style.display = 'none';
 			} else if (format == 'select' || format == 'indexed' || format == 'boolean') {
 				var option_els = [];
 				var selectedIndex = 0;
@@ -374,6 +527,10 @@ export default class SourceFilter {
 							
 							// update in internal data
 							this.settings[ e.target.getAttribute('data-setting') ] = val;
+
+							// a type change shows or hides the colour picker
+							if (e.target.getAttribute('data-setting') === 'key_color_type')
+								this.sync_key_color_type();
 
 							// request remote update
 							this.set_filter_setting(e.target.getAttribute('data-setting'), val)
@@ -436,12 +593,51 @@ export default class SourceFilter {
 		await wrc.safeCall('SetSourceFilterEnabled', {'sourceName': this.source.name, 'filterName': this.name, 'filterEnabled': this.enabled});
 	}
 
+	// the four key filter kinds whose settings this pane renders
+	is_key_filter () {
+		return /^(chroma|color)_key_filter(_v2)?$/.test(this.type);
+	}
+
+	// _v2 kinds store opacity as a float 0.0-1.0; the v1 kinds store an int 0-100.
+	// Never share one scale across the two.
+	is_v2_kind () {
+		return this.type.slice(-3) === '_v2';
+	}
+
+	opacity_to_percent (value) {
+		if (!this.is_key_filter())
+			return value;  // other kinds have no percent scale of ours to apply
+		return this.is_v2_kind() ? h.round(value * 100, 2) : value;
+	}
+
+	opacity_from_percent (percent) {
+		if (!this.is_key_filter())
+			return percent;
+		return this.is_v2_kind() ? percent / 100 : percent;
+	}
+
+	// OBS shows the colour picker only for the custom key colour type
+	sync_key_color_type () {
+		if (!this.key_color_el)
+			return;
+
+		this.key_color_el.style.display = (this.settings['key_color_type'] === 'custom') ? '' : 'none';
+
+		let select = this.settings_items['key_color_type'];
+		if (select)
+			select.value = this.settings['key_color_type'];
+	}
+
+	async set_filter_settings (inSettings) {
+		// overlay:true keeps the filter's other settings (font, colour, alignment...) intact
+		await wrc.safeCall('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': inSettings, 'overlay': true});
+	}
+
 	async set_filter_setting (inSetting, inValue) {
 		var key_value_pair = {};
 		key_value_pair[inSetting] = inValue;
 
-		// overlay:true keeps the filter's other settings (font, colour, alignment...) intact
-		await wrc.safeCall('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair, 'overlay': true});
+		await this.set_filter_settings(key_value_pair);
 	}
 
 	async get_filter_settings () {
@@ -474,9 +670,12 @@ export default class SourceFilter {
 					continue;
 				}
 				else if (input_item.set && typeof input_item.set == 'function')
-					input_item.set( this.settings[key] );
+					// opacity is stored 0.0-1.0 on _v2 but the slider shows percent
+					input_item.set((key === 'opacity') ? this.opacity_to_percent(this.settings[key]) : this.settings[key]);
 				else if (input_item.getAttribute('type') == 'text')
 					input_item.value = this.settings[key];
+				else if (input_item.getAttribute('type') == 'color')
+					input_item.value = h.obsColorToRgb(this.settings[key]);
 				else if (input_item.nodeName && input_item.nodeName.toLowerCase() == 'select') {
 					// first, find index of new value
 					let newSelectedIndex = 0;
@@ -503,5 +702,8 @@ export default class SourceFilter {
 					console.log('unhandled filter setting change:', key, this.settings[key], input_item);
 			}
 		}
+
+		// a remote key_color_type change can show or hide the colour picker
+		this.sync_key_color_type();
 	}
 }

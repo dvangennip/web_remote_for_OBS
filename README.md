@@ -51,6 +51,7 @@ Web remote UI for controlling [OBS Studio](https://obsproject.com/) through the 
     - Media
 - Change source filter properties
     - Color correction
+    - Chroma key and color key (v1 and v2): key colour and type, similarity, smoothness, spill, opacity, contrast, brightness, gamma
 - Take screenshot of current program
 - Start/stop recording, streaming, and replay buffer
 - Start/stop virtual camera

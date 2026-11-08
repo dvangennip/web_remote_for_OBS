@@ -41,3 +41,28 @@ export function round (value, precision) {
 	let multiplier = Math.pow(10, precision || 0);
 	return Math.round(value * multiplier) / multiplier;
 }
+
+/**
+ * OBS colours are 0xAABBGGRR: red in the low byte, then green, then blue.
+ * These filters ignore the alpha byte, but OBS's own picker stores 0xFF there,
+ * so a caller holding the stored value passes it as currentValue and the byte
+ * is preserved instead of being churned to 0x00 on every edit.
+ */
+export function rgbToObsColor (inHex, currentValue = null) {
+	let rgb   = inHex.replace('#', ''),
+		alpha = (currentValue === null) ? 0 : (currentValue >>> 24);
+
+	return (
+		(alpha                              << 24) |
+		(parseInt(rgb.substring(4, 6), 16) << 16) |  // b
+		(parseInt(rgb.substring(2, 4), 16) <<  8) |  // g
+		 parseInt(rgb.substring(0, 2), 16)           // r
+	) >>> 0;  // >>> 0 keeps it a non-negative 32-bit integer
+}
+
+export function obsColorToRgb (inInt) {
+	let value = inInt >>> 0,
+		byte  = (n) => ('0' + n.toString(16)).slice(-2);
+
+	return '#' + byte(value & 0xFF) + byte((value >>> 8) & 0xFF) + byte((value >>> 16) & 0xFF);
+}

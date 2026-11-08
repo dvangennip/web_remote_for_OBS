@@ -51,6 +51,7 @@ Interface web para controlar o [OBS Studio](https://obsproject.com/) pelo servid
     - Mídia
 - Alterar propriedades de filtros de fonte
     - Correção de cor
+    - Chroma key e chave de cor (v1 e v2): cor e tipo da chave, similaridade, suavidade, transbordamento (spill), opacidade, contraste, brilho, gama
 - Tirar captura da cena atual do programa
 - Iniciar/parar gravação, transmissão e buffer de replay
 - Iniciar/parar a câmera virtual
