@@ -1,24 +1,85 @@
 import * as h from './helper.js';
 import SourceFilter from './SourceFilter.js';
 import { Fader } from './Sliders.js';
+import { VUMeter } from './VUMeter.js';
+import { sceneItemId } from './ObsResolve.js';
+
+const VOLUME_DEBOUNCE_MS = 80;
+
+/**
+ * Meter bus. One InputVolumeMeters subscription for the whole page, one DOM write
+ * per animation frame for every source that got a new sample. The event arrives
+ * about 20 times a second per active input; repainting on arrival would be 20x
+ * the work with no visible benefit.
+ */
+const meter_sources = new Map(); // inputName -> SourceAudio
+let   meter_frame   = null;
+let   meter_bound   = false;
+
+function meter_subscribe () {
+	if (meter_bound)
+		return;
+	meter_bound = true;
+	wrc.on('InputVolumeMeters', on_meter_data);
+}
+
+function on_meter_data (e) {
+	const inputs = (e && e.inputs) || [];
+
+	for (let i = 0; i < inputs.length; i++) {
+		const source = meter_sources.get(inputs[i].inputName);
+		if (source)
+			source.meter_sample(inputs[i].inputLevelsMul);
+	}
+
+	if (meter_frame === null && typeof window !== 'undefined')
+		meter_frame = window.requestAnimationFrame(flush_meters);
+}
+
+function flush_meters () {
+	meter_frame = null;
+
+	for (const source of meter_sources.values())
+		source.draw_meter();
+}
+
+function meter_attach (source) {
+	meter_sources.set(source.name, source);
+	meter_subscribe();
+}
+
+function meter_detach (source) {
+	if (meter_sources.get(source.name) === source)
+		meter_sources.delete(source.name);
+}
 
 export default class SourceAudio {
 	constructor (inSource, is_sceneless = false) {
-		this.source      = inSource;
-		this.name        = inSource.name;
-		this.slug        = h.get_slug(inSource.name);
-		this.typeId      = inSource.typeId;
-		this.volume      = 0;
-		this.volume_db   = 0;
-		this.volume_max  = 0;
-		this.muted       = true;
-		this.active      = false;
-		this.visible     = false;
-		this.tracks      = [];
-		this.filters     = [];
-		this.last_update = 9999999; // improbably high number
-		this.in_scene    = false;
-		this.sceneless   = is_sceneless;
+		this.source        = inSource;
+		this.name          = inSource.name || inSource.inputName;
+		this.slug          = h.get_slug(this.name);
+		this.typeId        = inSource.typeId || inSource.inputKind || '';
+		this.volume        = 0;
+		this.volume_db     = 0;
+		this.volume_max    = 0;
+		this.muted         = true;
+		this.active        = false;
+		this.visible       = false;
+		this.tracks        = [];
+		this.track_map     = {};
+		this.filters       = [];
+		this.last_update   = 9999999; // improbably high number
+		this.in_scene      = false;
+		this.sceneless     = is_sceneless;
+		this.scene_name    = null;
+		this.scene_item_id = null;
+		this.volume_timer  = null;
+		this.levels        = null;
+		this.levels_dirty  = false;
+		this.levels_hot    = false;
+		this.video_active  = false;
+		this.last_peak_db  = null;
+		this._handlers     = [];
 
 		// create elements
 		this.el                = h.NewElement('li',     {'className': 'audio-item', 'id': 'audio_item_' + this.slug});
@@ -40,6 +101,7 @@ export default class SourceAudio {
 		this.fader             = new Fader(this.slug + '_fader');
 		this.fader.get_element().addEventListener('change', this.on_fader_change.bind(this));
 		this.column_buttons_el = h.NewElement('div',    {'className': 'audio-column-buttons'});
+
 		if (!this.sceneless) {
 			this.btn_visibility = h.NewElement('button', {
 				'className': 'audio-button visibility',
@@ -50,8 +112,8 @@ export default class SourceAudio {
 				}
 			});
 		}
-		
-		this.btn_mute          = h.NewElement('button', {
+
+		this.btn_mute = h.NewElement('button', {
 			'className': 'audio-button mute',
 			'title'    : 'Toggle mute',
 			'innerHTML': '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-on"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-off"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-1"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="volume-2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
@@ -59,7 +121,7 @@ export default class SourceAudio {
 				'click': this.on_mute_btn_click.bind(this)
 			}
 		});
-		this.btn_solo          = h.NewElement('button', {
+		this.btn_solo    = h.NewElement('button', {
 			'className': 'audio-button solo',
 			'title'    : 'Toggle solo',
 			'innerHTML': 'S',
@@ -67,15 +129,15 @@ export default class SourceAudio {
 				'click': this.on_solo_btn_click.bind(this)
 			}
 		});
-		this.btn_monitor       = h.NewElement('button', {
+		this.btn_monitor = h.NewElement('button', {
 			'className': 'audio-button',
 			'innerHTML': 'X',
 			'events': {
 				'click': this.on_monitor_btn_click.bind(this)
 			}
 		});
-		this.tracks_el         = h.NewElement('div',    {'className': 'audio-tracks'});
-		this.filters_list_el   = h.NewElement('ul',     {'className': 'filters-list'});
+		this.tracks_el       = h.NewElement('div', {'className': 'audio-tracks'});
+		this.filters_list_el = h.NewElement('ul',  {'className': 'filters-list'});
 
 		this.el.appendChild(this.name_el);
 		this.el.appendChild(this.settings_el);
@@ -104,17 +166,27 @@ export default class SourceAudio {
 				'data-track': i,
 				'title'     : 'Track ' + i,
 				'events'    : {
-					'click': this.on_track_btn_click.bind(this,i)
+					'click': this.on_track_btn_click.bind(this, i)
 				}
 			});
 			this.tracks.push(t);
 			this.tracks_el.appendChild(t);
 		}
-		
+
+		this.vu = new VUMeter(this.vol_canvas);
+
+		this.vol_max_el.addEventListener('click', () => {
+			this.vol_max_el.innerHTML = 'dB';
+			this.last_peak_db = null;
+			if (this.vu)
+				this.vu.reset_peak();
+		});
+
 		// set initial state
 		this.update_state();
 
 		this.get_volume();
+		this.get_mute();
 		if (!this.sceneless) {
 			this.get_visibility();
 		}
@@ -122,65 +194,37 @@ export default class SourceAudio {
 		this.get_tracks();
 		this.get_source_filters();
 
-		// handle relevant events
-		wrc.on('SourceVolumeChanged',           this.on_volume_changed.bind(this));
-		wrc.on('SourceMuteStateChanged',        this.on_mute_state_changed.bind(this));
-		wrc.on('SourceAudioActivated',          (e) => {console.log(e, e['sourceName']);});
-		wrc.on('SourceAudioDeactivated',        (e) => {console.log(e, e['sourceName']);});
-		
-		wrc.on('SourceAudioMixersChanged',      this.on_tracks_changed.bind(this));
+		this.bind_events();
+		meter_attach(this);
 
-		//SourceCreated + SourceDestroyed (handle externally?)
-		wrc.on('SourceRenamed',                 this.on_source_renamed.bind(this));
+		// repaint on a 3 s cadence; events keep the row current in between.
+		// Without this timer update_state() ran on every tick, for every row.
+		this.interval_timer = window.setInterval(this.update_state.bind(this), 3000);
+	}
 
-		wrc.on('SceneItemVisibilityChanged',    this.on_visibility_changed.bind(this));
+	/** Subscribe to one v5 protocol event; remembered so destroy() can unhook it. */
+	on_evt (event_name, handler) {
+		const bound = handler.bind(this);
+		wrc.on(event_name, bound);
+		this._handlers.push([event_name, bound]);
+	}
 
-		wrc.on('SourceFilterAdded',             this.on_filter_added.bind(this));
-		wrc.on('SourceFilterRemoved',           this.on_filter_removed.bind(this));
-		wrc.on('SourceFiltersReordered',        this.on_filters_reordered.bind(this));
-		wrc.on('SourceFilterVisibilityChanged', this.on_filter_visibility_changed.bind(this));
-
-		wrc.on('SwitchScenes',                  this.on_scene_changed.bind(this));
+	bind_events () {
+		this.on_evt('InputVolumeChanged',           this.on_volume_changed);
+		this.on_evt('InputMuteStateChanged',        this.on_mute_state_changed);
+		this.on_evt('InputAudioTracksChanged',      this.on_tracks_changed);
+		this.on_evt('InputActiveStateChanged',      this.on_active_changed);
+		this.on_evt('InputNameChanged',             this.on_input_name_changed);
+		this.on_evt('SourceFilterCreated',          this.on_filter_created);
+		this.on_evt('SourceFilterRemoved',          this.on_filter_removed);
+		this.on_evt('SourceFilterListReindexed',    this.on_filter_reindexed);
+		this.on_evt('SourceFilterSettingsChanged',  this.on_filter_settings_changed);
+		this.on_evt('SourceFilterEnableStateChanged', this.on_filter_enable_state_changed);
+		this.on_evt('SceneItemEnableStateChanged',  this.on_scene_item_enable_state_changed);
 	}
 
 	get_element () {
 		return this.el;
-	}
-
-	on_source_renamed (e) {
-		if (e['previousName'] == this.name) {
-			this.change_name( e['newName'] );
-		}
-	}
-
-	on_source_destroyed () {
-		// stop updating
-		this.pause_update();
-
-		// trigger all filter elements to be removed and destroyed
-		for (let i = this.filters.length - 1; i >= 0; i--) {
-			this.filters[i].pause_update_on_interval();
-
-			// TODO remove element
-		}
-	}
-
-	change_name (name) {
-		if (name) {
-			this.source.name       = name;
-			this.name              = name;
-			this.name_el.innerHTML = name;
-			this.slug              = h.get_slug(name);
-			this.el.setAttribute('id', 'audio_item_' + this.slug);
-		}
-	}
-
-	update (tick) {
-		this.last_update = tick;
-
-		if (!this.interval_timer) {
-			this.update_state();
-		}
 	}
 
 	update_state () {
@@ -191,24 +235,19 @@ export default class SourceAudio {
 		this.el.classList.toggle('in-scene', this.in_scene || this.sceneless);
 
 		// volume
-		// NOT USED YET this.vol_max_el.innerHTML = (h.round(h.mul_to_decibel(this.volume_max), 1) + ' dB').replace('Infinity','∞');
-		this.vol_el.innerHTML     = (h.round(h.mul_to_decibel(this.volume),     1) + ' dB').replace('Infinity','∞');
+		this.vol_el.innerHTML     = (h.round(h.mul_to_decibel(this.volume), 1) + ' dB').replace('Infinity','∞');
 		this.btn_mute.classList.toggle('volume-low',  this.volume  < 0.33);
 		this.btn_mute.classList.toggle('volume-mid',  (this.volume >=0.33 && this.volume < 0.66));
 		this.btn_mute.classList.toggle('volume-high', this.volume >= 0.66);
-		this.fader.set(this.volume);
-		// TODO update canvas if data is available
+
+		// never fight the user's finger: only sync the fader when it is idle
+		if (!this.fader.active)
+			this.fader.set(this.volume);
 
 		// buttons
-		// this.btn_mute.classList.toggle()
 		if (!this.sceneless) {
 			this.btn_visibility.toggleAttribute('disabled', !this.in_scene);
 		}
-		// this.btn_solo.classList.toggle()
-
-		// track buttons
-
-		// adjust timer if necessary?
 	}
 
 	pause_update () {
@@ -216,223 +255,192 @@ export default class SourceAudio {
 			window.clearInterval(this.interval_timer);
 	}
 
-	on_scene_changed (e) {
-		// check if this SourceItem is in the current scene
-		this.in_scene = false;
+	/** WebRemote calls this before removing the row element. */
+	on_source_destroyed () {
+		this.destroy();
+	}
 
-		for (var i = 0; i < e.sources.length; i++) {
-			if (e.sources[i].name.toLowerCase() == this.name.toLowerCase()) {
-				this.in_scene = true;
+	/** Unhook every event and the meter bus. The row can be removed safely after this. */
+	destroy () {
+		this.pause_update();
+		this.interval_timer = null;
 
-				this.get_visibility();
-				break;
-			}
+		meter_detach(this);
+
+		// Filters are standalone objects, not children of this row: they hold their
+		// own DOM and settings state, so drop the references or the whole graph of a
+		// removed input stays alive.
+		this.filters = [];
+
+		for (let i = 0; i < this._handlers.length; i++)
+			wrc.off(this._handlers[i][0], this._handlers[i][1]);
+		this._handlers = [];
+
+		if (this.volume_timer) {
+			window.clearTimeout(this.volume_timer);
+			this.volume_timer = null;
+		}
+	}
+
+	// ---------------------------------------------------------------- meters
+
+	/** Called from the meter bus with one inputLevelsMul array. */
+	meter_sample (levels) {
+		this.levels       = levels;
+		this.levels_dirty = true;
+	}
+
+	/** Called at most once per animation frame. */
+	draw_meter () {
+		if (!this.el.isConnected) {
+			// row was removed without destroy(); stop tracking it
+			meter_detach(this);
+			return;
 		}
 
-		if (!this.in_scene)
-			this.update_state();
+		if (!this.levels_dirty)
+			return;
+		this.levels_dirty = false;
+
+		this.vu.set(this.levels);
+		this.vu.draw();
+
+		// An audio-only input always reports videoActive:false, so the "live"
+		// highlight also follows the meter. Both are folded in once per frame.
+		this.levels_hot = this.any_level(this.levels);
+		this.refresh_active();
+
+		const peak_db = this.vu.peak_db();
+		const shown   = Number.isFinite(peak_db) ? h.round(peak_db, 1) : -Infinity;
+
+		if (shown !== this.last_peak_db) {
+			this.last_peak_db        = shown;
+			this.vol_max_el.innerHTML = (shown === -Infinity ? '-∞' : shown.toFixed(1)) + ' dB';
+		}
 	}
+
+	// ---------------------------------------------------------------- volume
 
 	async get_volume () {
-		let response = await wrc.sendCommand('GetVolume', {'source': this.name});
-		
-		if (response.status == 'ok') {
-			this.volume = response.volume;
-			this.muted  = response.muted;
+		const response = await wrc.safeCall('GetInputVolume', {'inputName': this.name});
+
+		if (response) {
+			this.volume    = response.inputVolumeMul;
+			this.volume_db = response.inputVolumeDb;
 
 			this.update_state();
 		}
 	}
 
+	/** Debounced: a fader drag fires dozens of change events per second. */
 	set_volume () {
-		wrc.sendCommand('SetVolume', {'source': this.name, 'volume': this.volume});
-		
-		// this.update_state();
-	}
+		if (this.volume_timer)
+			window.clearTimeout(this.volume_timer);
 
-	on_volume_changed (e) {
-		if (e['sourceName'] == this.name) {
-			this.volume    = e.volume;
-			this.volume_db = e.volumeDb;
-
-			this.update_state();
-		}
-	}
-
-	set_mute () {
-		wrc.sendCommand('SetMute', {'source': this.name, 'mute': this.muted});
-	}
-
-	async toggle_mute () {
-		await wrc.sendCommand('ToggleMute', {'source': this.name});
-
-		// this.update_state();
-	}
-
-	on_mute_state_changed (e) {
-		if (e['sourceName'] == this.name) {
-			this.muted = e.muted;
-
-			this.update_state();
-		}
-	}
-
-	async get_visibility () {
-		// by default, assume false. in case of error, it remains false
-		let visible = false;
-
-		if (this.in_scene) {
-			// omitted: 'scene-name': scene, 
-			let response = await wrc.sendCommand('GetSceneItemProperties', {'item': this.name});
-
-			if (response && response.status == 'ok') {
-				visible = response['visible'];
-			}
-		}
-
-		this.visible = visible;
-
-		this.update_visibility_state();
-	}
-
-	set_visibility (state) {
-		// omitted: 'scene-name': scene, 
-		wrc.sendCommand('SetSceneItemRender', {'source': this.name, 'render': state});
-	}
-
-	on_visibility_changed (e) {
-		if (e['item-name'] == this.name) {
-			this.visible = e['item-visible'];
-
-			this.update_visibility_state();
-		}
-	}
-
-	update_visibility_state () {
-		// also get active state, or just trigger update directly
-		if (this.visible)
-			this.get_active();
-		else
-			this.update_state();
-	}
-
-	async get_active () {
-		// TODO GetAudioActive is not the same as active in scene
-		// audioActive is true even if not in program scene, but false when muted or not playing
-		let response_s =  await wrc.sendCommand('GetSourceActive', {'sourceName': this.name});
-		let response_a =  await wrc.sendCommand('GetAudioActive',  {'sourceName': this.name});
-
-		if (response_s && response_s.status == 'ok' && response_a && response_a.status == 'ok') {
-			this.active = (response_s.sourceActive && response_a.audioActive);
-
-			this.update_state();
-		}
-	}
-
-	async get_tracks () {
-		let response =  await wrc.sendCommand('GetAudioTracks', {'sourceName': this.name});
-
-		if (response && response.status == 'ok') {
-			for (let i = 1; i < 7; i++) {
-				this.tracks[i-1].className = response['track'+i] ? 'enabled': '';
-			}
-		}
-	}
-
-	async set_track (track_index, state) {
-		let response = await wrc.sendCommand('SetAudioTracks', {'sourceName': this.name, 'track': track_index, 'active': state});
-
-		if (response && response.status == 'ok') {
-			this.tracks[track_index-1].classList.toggle('enabled', state);
-		}
-	}
-
-	on_tracks_changed (e) {
-		if (e.sourceName == this.name) {
-			for (let i = 0; i < e.mixers.length; i++) {
-				this.tracks[i].classList.toggle('enabled', e.mixers[i].enabled);
-			}
-		}
+		this.volume_timer = window.setTimeout(() => {
+			this.volume_timer = null;
+			wrc.safeCall('SetInputVolume', {'inputName': this.name, 'inputVolumeMul': this.volume});
+		}, VOLUME_DEBOUNCE_MS);
 	}
 
 	on_fader_change (e) {
-		this.volume           = this.fader.value;
+		this.volume = this.fader.value;
+
 		// immediate feedback
 		this.vol_el.innerHTML = (h.round(h.mul_to_decibel(this.volume), 1) + ' dB').replace('Infinity','∞');
-		// update volume in OBS
-		this.set_volume()
+
+		this.set_volume();
 	}
 
-	on_visibility_btn_click (e) {
-		this.visible = !this.visible;
+	on_volume_changed (e) {
+		if (e.inputName !== this.name)
+			return;
 
-		// immediate feedback
+		this.volume    = e.inputVolumeMul;
+		this.volume_db = e.inputVolumeDb;
+
 		this.update_state();
-
-		// update OBS
-		this.set_visibility(this.visible);
 	}
 
-	on_mute_btn_click (e) {
-		this.muted = !this.muted;
-		
-		// immediate feedback
-		this.update_state();
-		
-		// update OBS
-		this.set_mute();
-	}
+	// ------------------------------------------------------------------ mute
 
-	on_solo_btn_click (e) {
-		//TODO
-		console.log(this.name, 'solo clicked');
-	}
+	async get_mute () {
+		const response = await wrc.safeCall('GetInputMute', {'inputName': this.name});
 
-	on_monitor_btn_click (e) {
-		//TODO
-		console.log(this.name, 'monitor clicked');
-	}
-
-	on_track_btn_click (track_index, e) {
-		this.set_track(track_index, !this.tracks[track_index-1].classList.contains('enabled'));
-	}
-
-	async get_source_filters () {
-		let response = await wrc.sendCommand('GetSourceFilters', {'sourceName': this.name});
-		
-		if (response && response.status == 'ok') {
-			for (var i = 0; i < response.filters.length; i++) {
-				// create filter if it's of the right type
-				switch (response.filters[i].type) {
-					case 'noise_gate_filter':
-					case 'noise_suppress_filter_v2':
-					case 'limiter_filter':
-					case 'compressor_filter':
-					case 'expander_filter':
-					case 'gain_filter':
-					case 'async_delay_filter':
-					case 'ndi_audiofilter':
-					case 'vst_filter':
-					case 'invert_polarity_filter':
-					case 'audio_monitor':
-					case 'stereo_pan_filter': {
-						this.add_filter(response.filters[i]);
-						break;
-					}
-					default:  // do nothing for types not handled above
-						// console.log(response.filters[i])
-						break;
-				}
-			}
+		if (response) {
+			this.muted = response.inputMuted;
+			this.update_state();
 		}
 	}
 
+	on_mute_btn_click (e) {
+		wrc.safeCall('ToggleInputMute', {'inputName': this.name});
+	}
+
+	on_mute_state_changed (e) {
+		if (e.inputName !== this.name)
+			return;
+
+		this.muted = e.inputMuted;
+		this.update_state();
+	}
+
+	// ---------------------------------------------------------------- tracks
+
+	apply_tracks (map) {
+		this.track_map = Object.assign({}, map || {});
+
+		for (let i = 1; i < 7; i++)
+			this.tracks[i-1].classList.toggle('enabled', this.track_map[String(i)] === true);
+	}
+
+	async get_tracks () {
+		const response = await wrc.safeCall('GetInputAudioTracks', {'inputName': this.name});
+
+		if (response)
+			this.apply_tracks(response.inputAudioTracks);
+	}
+
+	async set_track (track_index, state) {
+		const map = Object.assign({}, this.track_map);
+		map[String(track_index)] = state;
+
+		// SetInputAudioTracks declares request fields only, so there is nothing to
+		// read back: paint the map we just sent instead of blanking the row until
+		// InputAudioTracksChanged arrives.
+		await wrc.safeCall('SetInputAudioTracks', {
+			'inputName'       : this.name,
+			'inputAudioTracks': map
+		});
+
+		this.apply_tracks(map);
+	}
+
+	on_track_btn_click (track_index, e) {
+		const current = this.track_map[String(track_index)] === true;
+		this.set_track(track_index, !current);
+	}
+
+	on_tracks_changed (e) {
+		if (e.inputName === this.name)
+			this.apply_tracks(e.inputAudioTracks);
+	}
+
+	// --------------------------------------------------------------- filters
+
+	async get_source_filters () {
+		const response = await wrc.safeCall('GetSourceFilterList', {'sourceName': this.name});
+
+		if (response && Array.isArray(response.filters))
+			for (let i = 0; i < response.filters.length; i++)
+				this.add_filter(response.filters[i]);
+	}
+
 	add_filter (filter_data) {
-		// first, check if filter exists already
+		const filter_name = filter_data.filterName || filter_data.name;
 		let current_filters = this.filters.map(x => x.name);
 
-		if (!current_filters.includes(filter_data.name)) {
-			// if new, create and add
+		if (!current_filters.includes(filter_name)) {
 			let filter_instance = new SourceFilter(this.source, filter_data);
 
 			this.filters.push(filter_instance);
@@ -441,59 +449,229 @@ export default class SourceAudio {
 	}
 
 	remove_filter (filter_data) {
-		// first, check if filter exists
+		const filter_name = filter_data.filterName || filter_data.name;
 		let current_filters = this.filters.map(x => x.name);
 
-		if (current_filters.includes(filter_data.name)) {
-			// if it exists, remove
-			let ix = current_filters.indexOf(filter_data.name);
+		if (current_filters.includes(filter_name)) {
+			let ix = current_filters.indexOf(filter_name);
 			let f  = this.filters[ix];
 
-			f.pause_update_on_interval();
 			this.filters_list_el.removeChild( f.get_element() );
 			this.filters.splice(ix,1);
 		}
 	}
 
-	on_filter_added (e) {
-		//SourceFilterAdded -> sourceName, filterName, filterType, filterSettings
-		if (e.sourceName == this.name) {
-			// just get all filters for this source and work from there
+	on_filter_created (e) {
+		if (e.sourceName === this.name)
 			this.get_source_filters();
-		}
 	}
 
 	on_filter_removed (e) {
-		//SourceFilterRemoved -> sourceName, filterName, filterType
-		if (e.sourceName == this.name) {
-			this.remove_filter({'name': e.filterName, 'type': e.filterType});
+		if (e.sourceName === this.name)
+			this.remove_filter(e);
+	}
+
+	on_filter_reindexed (e) {
+		if (e.sourceName === this.name)
+			this.get_source_filters();
+	}
+
+	on_filter_settings_changed (e) {
+		if (e.sourceName !== this.name)
+			return;
+
+		for (let i = 0; i < this.filters.length; i++) {
+			const f = this.filters[i];
+
+			if (f.name === e.filterName)
+				f.apply_settings(e.filterSettings || {});
 		}
 	}
 
-	on_filters_reordered (e) {
-		//SourceFiltersReordered -> filters (Array in correct order)
-		if (e.sourceName == this.name) {
-			// first, match order of e.filters
-			for (let i = 0; i < e.filters.length; i++) {
-				// update again after potential changes
-				let old_index = this.filters.map(x => x.name).indexOf(e.filters[i].name);
+	on_filter_enable_state_changed (e) {
+		if (e.sourceName !== this.name)
+			return;
 
-				// splice (remove) element from array at old_index, getting element in return, and insert that in new position i
-				this.filters.splice(i, 0, this.filters.splice(old_index, 1)[0]);
-			}
-				
-			// second, move elements into place by moving them towards the end, one by one in order
-			for (var i = 0; i < this.filters.length; i++) {
-				this.filters_list_el.append( this.filters[i].get_element() );
+		for (let i = 0; i < this.filters.length; i++) {
+			const f = this.filters[i];
+
+			// SourceFilter has no set_enabled(); mirror its own on_visibility_changed.
+			if (f.name === e.filterName) {
+				f.enabled = e.filterEnabled;
+				f.el.classList.toggle('disabled', !f.enabled);
 			}
 		}
 	}
 
-	on_filter_visibility_changed (e) {
-		//SourceFilterVisibilityChanged -> sourceName, filterName, filterEnabled
-		if (e.sourceName == this.name) {
-			let f = this.filters.find(x => x.name == e.filterName);
-			f.on_visibility_changed(e);
+	// ------------------------------------------------------------ visibility
+
+	async current_scene () {
+		if (this.scene_name)
+			return this.scene_name;
+
+		const response = await wrc.safeCall('GetCurrentProgramScene');
+		return response ? response.currentProgramSceneName : null;
+	}
+
+	async resolve_scene_item () {
+		const scene = await this.current_scene();
+		if (!scene)
+			return null;
+
+		this.scene_name = scene;
+		this.scene_item_id = await sceneItemId(wrc, scene, this.name);
+
+		return this.scene_item_id;
+	}
+
+	async get_visibility () {
+		const id = await this.resolve_scene_item();
+
+		if (id === null || id === undefined) {
+			this.in_scene      = false;
+			this.visible       = false;
+			this.scene_item_id = null;
+			this.update_visibility_state();
+			return;
 		}
+
+		const response = await wrc.safeCall('GetSceneItemEnabled', {
+			'sceneName'  : this.scene_name,
+			'sceneItemId': id
+		});
+
+		if (response) {
+			this.in_scene = true;
+			this.visible  = response.sceneItemEnabled;
+			this.update_visibility_state();
+		}
+	}
+
+	async set_visibility (state) {
+		const id = await this.resolve_scene_item();
+		if (id === null || id === undefined)
+			return;
+
+		const response = await wrc.safeCall('SetSceneItemEnabled', {
+			'sceneName'      : this.scene_name,
+			'sceneItemId'    : id,
+			'sceneItemEnabled': state
+		});
+
+		if (response) {
+			this.visible = state;
+			this.update_state();
+		}
+	}
+
+	on_visibility_btn_click (e) {
+		this.set_visibility(!this.visible);
+	}
+
+	on_scene_item_enable_state_changed (e) {
+		if (e.sceneName !== this.scene_name || e.sceneItemId !== this.scene_item_id)
+			return;
+
+		this.visible = e.sceneItemEnabled;
+		this.update_state();
+	}
+
+	update_visibility_state () {
+		if (this.visible)
+			this.get_active();
+		else
+			this.update_state();
+	}
+
+	/**
+	 * The program scene changed. v5 sends only the scene name (no v4 sources
+	 * array), so re-resolve this input's item inside the new scene. The row
+	 * follows the program scene; preview only affects it once it goes live.
+	 */
+	on_scene_changed (scene_name) {
+		this.scene_name    = scene_name || null;
+		this.scene_item_id = null;
+		this.in_scene      = false;
+		this.visible       = false;
+
+		if (!this.scene_name || this.sceneless) {
+			this.update_state();
+			return;
+		}
+
+		this.get_visibility();
+	}
+
+	// ------------------------------------------------------------- liveness
+
+	/**
+	 * obs-websocket 5 has no GetAudioActive request; the InputActiveStateChanged
+	 * event and the meter feed are the source of truth now. Kept as a cheap
+	 * refresh because the scene code calls it after a program scene change.
+	 */
+	async get_active () {
+		this.update_state();
+	}
+
+	on_active_changed (e) {
+		if (e.inputName !== this.name)
+			return;
+
+		this.video_active = e.videoActive === true;
+		this.refresh_active();
+	}
+
+	any_level (levels) {
+		if (!Array.isArray(levels))
+			return false;
+
+		for (let i = 0; i < levels.length; i++) {
+			const channel = levels[i];
+			if (Array.isArray(channel) && channel[0] > 0)
+				return true;
+		}
+
+		return false;
+	}
+
+	/** Live = video-active per the event, or audible per the meter. DOM write only on change. */
+	refresh_active () {
+		const next = this.video_active || this.levels_hot;
+
+		if (next !== this.active) {
+			this.active = next;
+			this.el.classList.toggle('active', next);
+		}
+	}
+
+	on_input_name_changed (e) {
+		if (e.oldInputName !== this.name)
+			return;
+
+		this.change_name(e.inputName);
+	}
+
+	change_name (new_name) {
+		meter_detach(this);
+
+		this.source.name = new_name;
+		this.name        = new_name;
+		this.slug        = h.get_slug(new_name);
+		this.el.id       = 'audio_item_' + this.slug;
+		this.name_el.innerHTML = new_name;
+
+		meter_attach(this);
+	}
+
+	// ------------------------------------------------------------ not wired
+
+	on_solo_btn_click (e) {
+		// Solo is not exposed by obs-websocket v5; button is not in the DOM.
+	}
+
+	on_monitor_btn_click (e) {
+		// Audio monitoring is not implemented: SetInputAudioMonitorType is
+		// deprecated in OBS 33 (monitoring_type became a boolean). Button is not
+		// in the DOM; see the README note rather than calling the deprecated request.
 	}
 }

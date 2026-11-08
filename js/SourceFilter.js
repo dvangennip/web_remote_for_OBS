@@ -6,10 +6,12 @@ export default class SourceFilter {
 		this.source         = inSource;
 		this.source_slug    = h.get_slug(inSource.name);
 		this.filter         = inFilter;
-		this.name           = this.filter.name;
-		this.type           = this.filter.type;
-		this.enabled        = this.filter.enabled;
-		this.open           = false;
+		// v5 GetSourceFilterList/GetSourceFilter speak filterName/filterKind/
+		// filterEnabled/filterSettings; older shapes used name/type/enabled/settings
+		this.name           = (this.filter.filterName !== undefined) ? this.filter.filterName : this.filter.name;
+		this.type           = (this.filter.filterKind !== undefined) ? this.filter.filterKind : this.filter.type;
+		this.enabled        = (this.filter.filterEnabled !== undefined) ? this.filter.filterEnabled : this.filter.enabled;
+		this.remote_settings = this.filter.filterSettings || this.filter.settings || {};
 		this.settings       = {};
 		this.settings_items = {};
 
@@ -19,9 +21,6 @@ export default class SourceFilter {
 		});
 		if (!this.enabled) {
 			this.el.classList.add('disabled');
-		}
-		if (this.open) {
-			this.el.classList.add('open');
 		}
 
 		this.title_el = h.NewElement('label', {
@@ -134,8 +133,8 @@ export default class SourceFilter {
 		// merge actual settings with defaults generated above
 		//   any setting left to its default is not transmitted, hence the need to include defaults above
 		for (let key in this.settings) {
-			if (this.filter.settings[key]) {
-				this.settings[key] = this.filter.settings[key];
+			if (this.remote_settings[key]) {
+				this.settings[key] = this.remote_settings[key];
 			}
 		}
 
@@ -394,22 +393,8 @@ export default class SourceFilter {
 			this.settings_items[key] = input_item;
 		}
 
-		// set up updates on interval (no events available to get filter changes)
-		this.update_on_interval();
-	}
-
-	update_on_interval () {
-		this.pause_update_on_interval();
-
-		this.get_filter_settings();
-
-		// reset interval timeout
-		this.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
-	}
-
-	pause_update_on_interval () {
-		// clear timeout
-		window.clearTimeout(this.interval_timer);
+		// Filter changes arrive as SourceFilter* events, subscribed in SourceAudio;
+		// there is no poll loop. The pane does one fresh read when it is expanded.
 	}
 
 	get_element () {
@@ -429,6 +414,11 @@ export default class SourceFilter {
 
 		// update UI
 		this.el.classList.toggle('open', this.open);
+
+		// one fresh read on expand: the events keep it current while it is open,
+		// but a collapsed pane may have missed changes since it was built
+		if (this.open)
+			this.get_filter_settings();
 	}
 
 	toggle_enable (e) {
@@ -442,72 +432,75 @@ export default class SourceFilter {
 		this.set_visibility();
 	}
 
-	on_visibility_changed (e) {
-		// store data
-		this.enabled = e.filterEnabled;
-
-		// update UI
-		this.el.classList.toggle('disabled', !this.enabled);
-	}
-
 	async set_visibility () {
-		await wrc.sendCommand('SetSourceFilterVisibility', {'sourceName': this.source.name, 'filterName': this.name, 'filterEnabled': this.enabled});
+		await wrc.safeCall('SetSourceFilterEnabled', {'sourceName': this.source.name, 'filterName': this.name, 'filterEnabled': this.enabled});
 	}
 
 	async set_filter_setting (inSetting, inValue) {
 		var key_value_pair = {};
 		key_value_pair[inSetting] = inValue;
 
-		await wrc.sendCommand('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair});
+		// overlay:true keeps the filter's other settings (font, colour, alignment...) intact
+		await wrc.safeCall('SetSourceFilterSettings', {'sourceName': this.source.name, 'filterName': this.name, 'filterSettings': key_value_pair, 'overlay': true});
 	}
 
 	async get_filter_settings () {
-		let response = await wrc.sendCommand('GetSourceFilterInfo', {'sourceName': this.source.name, 'filterName': this.name});
+		let response = await wrc.safeCall('GetSourceFilter', {'sourceName': this.source.name, 'filterName': this.name});
 
-		if (response && response.status == 'ok') {
+		if (response) {
 			// set enabled state
-			this.enabled = response.enabled;
+			this.enabled = response.filterEnabled;
 
 			// update UI
 			this.el.classList.toggle('disabled', !this.enabled);
-			
-			// merge settings with what's stored
-			for (let key in response.settings) {
-				if (this.settings[key] != response.settings[key]) {
-					this.settings[key] = response.settings[key];
 
-					// also update UI for this setting
-					let input_item = this.settings_items[key];
-					
-					if (input_item.set && typeof input_item.set == 'function')
-						input_item.set( this.settings[key] );
-					else if (input_item.getAttribute('type') == 'text')
-						input_item.value = this.settings[key];
-					else if (input_item.nodeName && input_item.nodeName.toLowerCase() == 'select') {
-						// first, find index of new value
-						let newSelectedIndex = 0;
-						for (var i = 0; i < input_item.children.length; i++) {
-							// if match is found, store and exit the for loop
-							if (input_item.children[i].value.toLowerCase() == this.settings[key].toLowerCase()) {
-								newSelectedIndex = i;
-								break;
-							}
-						}
+			this.apply_settings(response.filterSettings || {});
+		}
+	}
 
-						// need to explicitly set the chosen value by its index
-						input_item.selectedIndex = newSelectedIndex;
-						
-						// second, properly set the value
-						if (input_item.getAttribute('data-format') === 'indexed') {
-							this.settings[key] = parseFloat(this.settings[key]);
-						}
-						else if (input_item.getAttribute('data-format') === 'boolean') {
-							this.settings[key] = (this.settings[key] === 'true') ? true : false;
-						}
+	/** Merge a settings object from OBS into local state and widgets. Shared by the
+	 *  fresh read above and by SourceAudio's SourceFilterSettingsChanged handler. */
+	apply_settings (remote) {
+		// merge settings with what's stored
+		for (let key in remote) {
+			if (this.settings[key] != remote[key]) {
+				this.settings[key] = remote[key];
 
-					} else
-						console.log('unhandled filter setting change:', key, this.settings[key], input_item);
+				// also update UI for this setting
+				let input_item = this.settings_items[key];
+
+				if (!input_item) {
+					// key the UI does not expose; keep the value, skip the widget
+					continue;
 				}
+				else if (input_item.set && typeof input_item.set == 'function')
+					input_item.set( this.settings[key] );
+				else if (input_item.getAttribute('type') == 'text')
+					input_item.value = this.settings[key];
+				else if (input_item.nodeName && input_item.nodeName.toLowerCase() == 'select') {
+					// first, find index of new value
+					let newSelectedIndex = 0;
+					for (var i = 0; i < input_item.children.length; i++) {
+						// if match is found, store and exit the for loop
+						if (input_item.children[i].value.toLowerCase() == this.settings[key].toLowerCase()) {
+							newSelectedIndex = i;
+							break;
+						}
+					}
+
+					// need to explicitly set the chosen value by its index
+					input_item.selectedIndex = newSelectedIndex;
+
+					// second, properly set the value
+					if (input_item.getAttribute('data-format') === 'indexed') {
+						this.settings[key] = parseFloat(this.settings[key]);
+					}
+					else if (input_item.getAttribute('data-format') === 'boolean') {
+						this.settings[key] = (this.settings[key] === 'true') ? true : false;
+					}
+
+				} else
+					console.log('unhandled filter setting change:', key, this.settings[key], input_item);
 			}
 		}
 	}
