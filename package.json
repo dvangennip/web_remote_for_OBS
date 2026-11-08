@@ -3,7 +3,8 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check": "for f in js/*.js; do node --check \"$f\" || exit 1; done"
+		"check": "for f in js/*.js; do node --check \"$f\" || exit 1; done",
+		"smoke": "node test/smoke-browser.mjs"
 	},
 	"devDependencies": {
 		"obs-websocket-js": "5.0.8"
