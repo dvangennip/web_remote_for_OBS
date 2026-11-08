@@ -4,7 +4,7 @@
 	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Web remote for OBS</title>
-	<script type='text/javascript' src='obs-websocket.js'></script>
+	<script type='text/javascript' src='vendor/obs-ws.global.js'></script>
 	<script type='module' src='js/base.js'></script>
 	<link rel="stylesheet" href="style.css" />
 </head>
@@ -108,8 +108,8 @@
 			<h4>Connection to OBS (via obs-websocket)</h4>
 			<div class="source-inputs">
 				<div class="input-wrapper input-hostname">
-					<label for="obs_ws_host">Host (e.g., localhost:4444)</label>
-					<input type="text" id="obs_ws_host" name="obs-ws-host" value="localhost:4444">
+					<label for="obs_ws_host">Host (e.g., localhost:4455)</label>
+					<input type="text" id="obs_ws_host" name="obs-ws-host" value="localhost:4455">
 					<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-insecure" title="Connection is not secure">
 						<rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
 						<path d="M7 11V7a5 5 0 019.9-1"></path>

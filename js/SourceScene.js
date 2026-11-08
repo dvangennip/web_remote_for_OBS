@@ -1,5 +1,65 @@
 import * as h from './helper.js';
 
+/**
+ * Thumbnails go out as one GetSourceScreenshot batch per refresh tick instead of
+ * one round trip per scene: every scene that refreshes inside the coalescing
+ * window lands in the same wrc.batch() call.
+ */
+const THUMB_MAX_WIDTH    = 320; // server scales to this width, aspect kept
+const THUMB_QUALITY      = 60;
+const THUMB_FLUSH_DELAY  = 100; // ms window used to collect a tick's requests
+
+let shot_queue     = [];
+let shot_flush_id  = 0;
+
+function flush_screenshots () {
+	shot_flush_id = 0;
+
+	const jobs = shot_queue;
+	shot_queue = [];
+
+	if (jobs.length === 0)
+		return;
+
+	// disconnected: settle every job so awaiting callers don't hang forever
+	if (!window.wrc || !wrc.isConnected) {
+		jobs.forEach(function (job) { job.resolve(null); });
+		return;
+	}
+
+	wrc.batch(jobs.map(function (job) {
+		return {
+			'requestType': 'GetSourceScreenshot',
+			'requestData': {
+				'sourceName'             : job.sourceName,
+				'imageFormat'            : 'jpg',
+				'imageWidth'             : job.width,
+				'imageCompressionQuality': THUMB_QUALITY
+			}
+		};
+	})).then(function (results) {
+		for (let i = 0; i < jobs.length && i < results.length; i++) {
+			jobs[i].resolve((results[i].ok && results[i].data) ? results[i].data.imageData : null);
+		}
+	}).catch(function () {
+		jobs.forEach(function (job) { job.resolve(null); });
+	});
+}
+
+/**
+ * Queue a screenshot request for this source. Resolves with base64 image data
+ * (no data: prefix) or null.
+ */
+function request_screenshot (sourceName, width) {
+	return new Promise(function (resolve) {
+		shot_queue.push({ 'sourceName': sourceName, 'width': width, 'resolve': resolve });
+
+		if (!shot_flush_id) {
+			shot_flush_id = window.setTimeout(flush_screenshots, THUMB_FLUSH_DELAY);
+		}
+	});
+}
+
 export default class SourceScene {
 	constructor (index, name) {
 		this.index       = index;
@@ -7,6 +67,9 @@ export default class SourceScene {
 		this.last_update = 9999999; // improbably high number
 		this.is_program  = wr.scene_program === name;
 		this.is_preview  = wr.scene_preview === name;
+		this.screenshot  = null;    // last base64 payload, to skip redundant DOM writes
+		this.interval_timer = null; // pending screenshot tick, never more than one
+		this.paused         = false;
 
 		// create elements
 		this.el          = h.NewElement('li', {
@@ -55,20 +118,36 @@ export default class SourceScene {
 			this.el.className = 'scene preview';
 		} else {
 			this.el.className = 'scene';
-
-			window.clearInterval(this.interval_timer);
 		}
 
-		if (this.is_program || this.is_preview) {
-			this.interval_timer = window.setInterval(this.set_screenshot.bind(this),  2000);
-		} else {
-			this.interval_timer = window.setInterval(this.set_screenshot.bind(this), 10000);
+		// one tick per tile, always: cancel any pending one before arming a new
+		// one, otherwise every program<->preview switch stacks another interval
+		window.clearTimeout(this.interval_timer);
+		this.interval_timer = null;
+
+		if (!this.paused) {
+			this._schedule_shot();
 		}
 	}
 
+	_schedule_shot () {
+		const delay = (this.is_program || this.is_preview) ? 2000 : 10000;
+
+		this.interval_timer = window.setTimeout(function () {
+			this.interval_timer = null;
+
+			if (this.paused)
+				return;
+
+			this.set_screenshot();
+			this._schedule_shot(); // re-arm after the tick, never overlapping it
+		}.bind(this), delay);
+	}
+
 	pause_update () {
-		if (this.interval_timer)
-			window.clearInterval(this.interval_timer);
+		this.paused = true;
+		window.clearTimeout(this.interval_timer);
+		this.interval_timer = null;
 	}
 
 	set_program () {
@@ -105,40 +184,45 @@ export default class SourceScene {
 	}
 
 	async set_scene (forceCurrentScene) {
-		let cmd = (wr.studio_mode) ? 'SetPreviewScene' : 'SetCurrentScene';
-		
-		if (forceCurrentScene) {
-			cmd = 'SetCurrentScene';
-		}
+		let request_type = (wr.studio_mode && !forceCurrentScene) ? 'SetCurrentPreviewScene' : 'SetCurrentProgramScene';
 
-		await wrc.sendCommand(cmd, {'scene-name': this.name});
+		await wrc.safeCall(request_type, {'sceneName': this.name});
 	}
 
 	async set_screenshot () {
-		let img_width  = (this.el.offsetWidth > 0) ? this.el.offsetWidth : 250;
-		let img_height = (1 / wr.aspect_ratio) * img_width;
+		let img_width = (this.el.offsetWidth > 0) ? this.el.offsetWidth : 250;
 
-		let response = await wrc.sendCommand('TakeSourceScreenshot', {
-			'sourceName': this.name,
-			'embedPictureFormat': 'jpg',
-			'width': img_width,
-			'height': img_height
-		});
+		img_width = Math.min(Math.round(img_width), THUMB_MAX_WIDTH);
 
-		if (response && response.status == 'ok' && response.img) {
-			// apply image but with preload dummy image object as interstage to eliminate 'refresh flickering'
+		let image_data = await request_screenshot(this.name, img_width);
 
-			// create a new Image object as dummy holder to trigger a preload of the image
-			let img_dummy = new Image();
+		if (!image_data)
+			return;
 
-			// when preload is complete, apply the image to the element
-			img_dummy.onload = function () {
-				this.el.style.backgroundImage = 'url("' + response.img + '")';
-			}.bind(this)
+		// OBS 33 hands back a data:image/jpg;base64,... string, but the field is
+		// documented as bare base64, so accept either shape
+		let src = (image_data.indexOf('data:') === 0)
+			? image_data
+			: 'data:image/jpeg;base64,' + image_data;
 
-			// setting 'src' actually starts the preload
-			img_dummy.src = response.img;
-		}
+		// unchanged bytes: nothing to redraw
+		if (src === this.screenshot)
+			return;
+
+		this.screenshot = src;
+
+		// apply image but with preload dummy image object as interstage to eliminate 'refresh flickering'
+
+		// create a new Image object as dummy holder to trigger a preload of the image
+		let img_dummy = new Image();
+
+		// when preload is complete, apply the image to the element
+		img_dummy.onload = function () {
+			this.el.style.backgroundImage = 'url("' + src + '")';
+		}.bind(this);
+
+		// trigger preload
+		img_dummy.src = src;
 	}
 
 	_get_index_string () {

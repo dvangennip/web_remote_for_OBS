@@ -30,12 +30,20 @@ export default class WebRemote {
 		this.virtualcam_active  = false;
 		this.outputs            = [];
 
+		// keyboard shortcuts: bind once and register for the page lifetime, so a
+		// reconnect cannot stack a second listener on the old, still-live one
+		this.handle_key_event_bound = this.handle_key_event.bind(this);
+		window.addEventListener('keydown', this.handle_key_event_bound, false);
+
+		// bumped on every disconnect so an in-flight poll tick can tell whether
+		// the connection it started under is still the current one
+		this.connection_generation = 0;
+
 		// set event listeners
 		this.button_transition = document.getElementById('btn_transition');
 		this.button_transition.addEventListener('click', this.transition.bind(this), false);
 
 		this.button_toggle_mode = document.getElementById('btn_toggle_mode');
-		this.button_toggle_text = document.getElementById('btn_toggle_mode_text');
 		this.button_toggle_mode.addEventListener('click', this.toggle_studio_mode.bind(this), false);
 
 		this.button_fullscreen = document.getElementById('btn_toggle_fullscreen');
@@ -83,52 +91,69 @@ export default class WebRemote {
 		// this is more of a setup function than updater
 		this.update_source_list();
 
-		// setup obs event handlers
-		wrc.on('StudioModeSwitched',     this.on_studio_mode_switched.bind(this));
-		wrc.on('SwitchScenes',           this.on_scene_changed.bind(this));
-		wrc.on('PreviewSceneChanged',    this.on_preview_changed.bind(this));
+		// setup obs event handlers (v5 names; payloads carry the state directly)
+		wrc.on('StudioModeStateChanged',     this.on_studio_mode_switched.bind(this));
+		wrc.on('CurrentProgramSceneChanged', this.on_scene_changed.bind(this));
+		wrc.on('CurrentPreviewSceneChanged', this.on_preview_changed.bind(this));
 
-		wrc.on('ScenesChanged',          this.on_scenes_changed.bind(this));
-		wrc.on('SourceCreated',          this.on_source_created.bind(this));
-		wrc.on('SourceDestroyed',        this.on_source_destroyed.bind(this));
-		wrc.on('SourceRenamed',          this.on_source_renamed.bind(this));
+		wrc.on('SceneListChanged',           this.on_scenes_changed.bind(this));
+		wrc.on('SceneNameChanged',           this.on_scene_renamed.bind(this));
+		wrc.on('InputCreated',               this.on_source_created.bind(this));
+		wrc.on('InputRemoved',               this.on_source_destroyed.bind(this));
+		wrc.on('InputNameChanged',           this.on_source_renamed.bind(this));
 
-		wrc.on('StreamStarting',         this.on_stream_starting.bind(this));
-		wrc.on('StreamStarted',          this.on_stream_started.bind(this));
-		wrc.on('StreamStopping',         this.on_stream_stopping.bind(this));
-		wrc.on('StreamStopped',          this.on_stream_stopped.bind(this));
-		wrc.on('StreamStatus',           this.on_stream_status.bind(this));
-
-		wrc.on('RecordingStarting',      this.on_recording_starting.bind(this));
-		wrc.on('RecordingStarted',       this.on_recording_started.bind(this));
-		wrc.on('RecordingStopping',      this.on_recording_stopping.bind(this));
-		wrc.on('RecordingStopped',       this.on_recording_stopped.bind(this));
-		wrc.on('RecordingPaused',        this.on_recording_paused.bind(this));
-		wrc.on('RecordingResumed',       this.on_recording_resumed.bind(this));
-
-		wrc.on('VirtualCamStarted',      this.on_virtualcam_started.bind(this));
-		wrc.on('VirtualCamStopped',      this.on_virtualcam_stopped.bind(this));
+		wrc.on('StreamStateChanged',         this.on_stream_state.bind(this));
+		wrc.on('RecordStateChanged',         this.on_record_state.bind(this));
+		wrc.on('VirtualcamStateChanged',     this.on_virtualcam_state.bind(this));
+		wrc.on('ReplayBufferStateChanged',   this.on_replay_buffer_state.bind(this));
 	}
 
 	on_connected () {
-		// start requesting updates
-		this.get_video_info();
-
-		this.get_virtualcam_status();
-
-		this.get_scene_list();
-
-		this.get_studio_mode();
-		
-		this.update_audio_list();
+		// one batch for the first paint; events keep it current afterwards
+		this.initial_poll().catch(this.log_async_error);
 
 		// setup interval for refreshing data
-		self.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+		this.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+	}
 
-		window.addEventListener('keydown', this.handle_key_event.bind(this), false);
+	async initial_poll () {
+		let results = null;
+
+		try {
+			results = await wrc.batch([
+				{ requestType: 'GetVideoSettings' },
+				{ requestType: 'GetSceneList' },
+				{ requestType: 'GetStudioModeEnabled' },
+				{ requestType: 'GetVirtualCamStatus' },
+			]);
+		} catch (e) {
+			results = null;
+		}
+
+		if (!results)
+			return;
+
+		this.apply_video_settings(results[0]);
+		this.apply_scene_list(results[1]);
+
+		if (results[2].ok) {
+			this.studio_mode = results[2].data.studioModeEnabled;
+			this.update_studio_mode();
+			this.update_scenes();
+		}
+
+		if (results[3].ok) {
+			this.virtualcam_active = results[3].data.outputActive;
+			this.update_virtualcam_status();
+		}
+
+		this.update_audio_list().catch(this.log_async_error);
 	}
 
 	on_disconnected () {
+		// invalidate any poll tick still awaiting its batch, so it cannot re-arm
+		this.connection_generation++;
+
 		this.pause_update_on_interval();
 
 		for (var name in this.scenes) {
@@ -140,31 +165,64 @@ export default class WebRemote {
 
 	is_connection_open () {
 		// TODO return true if connected but false if in the midst of scenecollection or profile change
-		return wrc.connected;
+		return wrc.isConnected;
 	}
 
-	async get_video_info () {
-		// get aspect ratio
-		let response = await wrc.sendCommand('GetVideoInfo');
-
-		if (response && response.status == 'ok') {
-			this.video_width  = response['baseWidth'];
-			this.video_height = response['baseHeight'];
-
-			this.aspect_ratio = `${this.video_width}/${this.video_height}`;
-
-			this.video_fps    = response['fps'];
-		}
+	log_async_error (e) {
+		// fire-and-forget paths must not lose their failures silently
+		console.error('WebRemote: async task failed', e);
 	}
 
-	update_on_interval () {
+	apply_video_settings (result) {
+		if (!result || !result.ok)
+			return;
+
+		this.apply_video_data(result.data);
+	}
+
+	apply_video_data (data) {
+		this.video_width  = data.baseWidth;
+		this.video_height = data.baseHeight;
+
+		this.aspect_ratio = `${this.video_width}/${this.video_height}`;
+
+		const denominator = data.fpsDenominator || 1;
+		this.video_fps    = data.fpsNumerator / denominator;
+	}
+
+	async update_on_interval () {
 		this.pause_update_on_interval();
 
-		this.update_status_list();
-		this.update_outputs();
+		// the tick that started under this generation may re-arm; a tick whose
+		// batch spans a disconnect must not, or polling would resume behind the
+		// reconnect and run a second chain alongside the one on_connected starts
+		const generation = this.connection_generation;
 
-		// reset interval timeout
-		this.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
+		let results = null;
+
+		try {
+			results = await wrc.batch([
+				{ requestType: 'GetStreamStatus' },
+				{ requestType: 'GetRecordStatus' },
+				{ requestType: 'GetVirtualCamStatus' },
+				{ requestType: 'GetReplayBufferStatus' },
+				{ requestType: 'GetStats' },
+				{ requestType: 'GetVideoSettings' },
+				{ requestType: 'GetOutputList' },
+			]);
+		} catch (e) {
+			results = null;
+		}
+
+		if (results) {
+			this.update_status_list(results);
+			this.update_outputs(results[6]);
+		}
+
+		// reset interval timeout, but only while this tick still belongs to the
+		// current connection
+		if (generation === this.connection_generation)
+			this.interval_timer = window.setTimeout(this.update_on_interval.bind(this), 3000);
 	}
 
 	pause_update_on_interval () {
@@ -185,16 +243,19 @@ export default class WebRemote {
 	}
 
 	async get_studio_mode () {
-		let response = await wrc.sendCommand('GetStudioModeStatus');
+		const data = await wrc.safeCall('GetStudioModeEnabled');
 
-		this.studio_mode = (response && response.studioMode) || false;
-		
+		if (!data)
+			return;
+
+		this.studio_mode = data.studioModeEnabled;
+
 		this.update_studio_mode();
 		this.update_scenes();
 	}
 
 	on_studio_mode_switched (e) {
-		this.studio_mode = e['new-state'];
+		this.studio_mode = e.studioModeEnabled;
 		this.update_studio_mode();
 	}
 
@@ -211,32 +272,49 @@ export default class WebRemote {
 	}
 
 	async toggle_studio_mode () {
-		// update immediately for fast feedback
-		this.studio_mode = !this.studio_mode;
-		this.update_studio_mode();
-		
-		await wrc.sendCommand('ToggleStudioMode');
+		// v5 has no toggle request: read the current state, then set the opposite
+		const data = await wrc.safeCall('GetStudioModeEnabled');
+
+		if (!data)
+			return;
+
+		await wrc.safeCall('SetStudioModeEnabled', { studioModeEnabled: !data.studioModeEnabled });
 	}
 
 	async get_scene_list () {
-		let response = await wrc.sendCommand('GetSceneList');
+		const data = await wrc.safeCall('GetSceneList');
 
-		// update scenes but skip hidden scenes (any with 'subscene' or 'hidden' in the name)
-		this.scene_list = response['scenes'].filter(function (i) {
-			let include_scene = true;
-			if (i.name.indexOf('subscene') != -1) {
-				include_scene = false;
-			}
-			if (i.name.indexOf('hidden') != -1) {
-				include_scene = false;
-			}
-			return include_scene;
-		});
+		if (data)
+			this.apply_scene_list({ ok: true, data: data });
+	}
+
+	apply_scene_list (result) {
+		if (!result || !result.ok)
+			return;
+
+		const data = result.data;
+
+		// Sort by sceneIndex so the 0-9 hotkeys keep the same order as in OBS.
+		// Skip hidden helper scenes (any with 'subscene' or 'hidden' in the name).
+		this.scene_list = data.scenes
+			.slice()
+			.sort((a, b) => a.sceneIndex - b.sceneIndex)
+			.filter(function (i) {
+				let include_scene = true;
+				if (i.sceneName.indexOf('subscene') != -1) {
+					include_scene = false;
+				}
+				if (i.sceneName.indexOf('hidden') != -1) {
+					include_scene = false;
+				}
+				return include_scene;
+			});
 
 		this.update_scene_list();
 
-		// update program scene data
-		this.on_scene_changed({'scene-name': response['current-scene']})
+		// program and preview state after a scene list change
+		this.on_scene_changed({ sceneName: data.currentProgramSceneName });
+		this.on_preview_changed({ sceneName: data.currentPreviewSceneName });
 	}
 
 	update_scene_list () {
@@ -248,7 +326,7 @@ export default class WebRemote {
 		}
 
 		for (let i = 0; i < this.scene_list.length; i++) {
-			let name = this.scene_list[i].name;
+			let name = this.scene_list[i].sceneName;
 
 			if (this.scenes[name]) {
 				// if found, update
@@ -275,161 +353,174 @@ export default class WebRemote {
 	}
 
 	async update_scenes () {
-		if (this.studio_mode) {
-			await this.get_preview_scene();
-		}
-		await this.get_program_scene();
-
-		this.update_scene_list();
-	}
-
-	async get_program_scene () {
-		let response = await wrc.sendCommand('GetCurrentScene');
-
-		// this.scene_program = response['name'];
-		this.on_scene_changed({'scene-name': response['name']});
-	}
-
-	async get_preview_scene () {
-		let response = await wrc.sendCommand('GetPreviewScene');
-
-		this.on_preview_changed({'scene-name': response['name']});
+		await this.get_scene_list();
 	}
 
 	on_preview_changed (e) {
-		// first, update old preview scene	
-		if (this.scenes[ this.scene_preview ]) {	
+		const scene_name = e.sceneName || '';
+
+		// first, update old preview scene
+		if (this.scenes[ this.scene_preview ]) {
 			this.scenes[ this.scene_preview ].unset_preview();
 		}
 
-		this.scene_preview = e['scene-name'];
+		this.scene_preview = scene_name;
 
 		// update new preview scene
-		if (this.scenes[ e['scene-name'] ]) {
-			this.scenes[ e['scene-name'] ].set_preview();
+		if (this.scenes[ scene_name ]) {
+			this.scenes[ scene_name ].set_preview();
 		}
 	}
 
 	on_scene_changed (e) {
-		// first, update old program scene	
-		if (this.scenes[ this.scene_program ]) {	
+		const scene_name = e.sceneName || '';
+
+		// first, update old program scene
+		if (this.scenes[ this.scene_program ]) {
 			this.scenes[ this.scene_program ].unset_program();
 		}
 
-		this.scene_program = e['scene-name'];
+		this.scene_program = scene_name;
 
 		// update new program scene
-		if (this.scenes[ e['scene-name'] ]) {
-			this.scenes[ e['scene-name'] ].set_program();
+		if (this.scenes[ scene_name ]) {
+			this.scenes[ scene_name ].set_program();
 		}
 
-		// also trigger audio to reevaluate its active state (after minor delay)
-		//   (no separate event exists for this)
-		window.setTimeout(function () {
+		// the audio rows resolve their scene item against the program scene, so
+		// they must re-resolve it here or their visible/in-scene state freezes
+		for (let i = 0; i < this.audio_list.length; i++) {
+			this.audio_list[i].on_scene_changed(scene_name);
+		}
+	}
+
+	on_scene_renamed (e) {
+		const old_name = e.oldSceneName || '';
+		const new_name = e.sceneName || '';
+		const scene    = this.scenes[old_name];
+
+		if (scene) {
+			scene.change_name(new_name);
+
+			// this.scenes is keyed by name, so move the entry with the tile
+			delete this.scenes[old_name];
+			this.scenes[new_name] = scene;
+		}
+
+		if (this.scene_program === old_name) {
+			this.scene_program = new_name;
+
 			for (let i = 0; i < this.audio_list.length; i++) {
-				this.audio_list[i].get_active();
+				this.audio_list[i].on_scene_changed(new_name);
 			}
-		}.bind(this),500);
-		
+		}
+
+		if (this.scene_preview === old_name)
+			this.scene_preview = new_name;
 	}
 
 	on_scenes_changed (e) {
-		this.get_scene_list();
+		// v5 payload carries no uuids and no program/preview summary, so re-read
+		this.get_scene_list().catch(this.log_async_error);
 	}
 
 	on_source_created (e) {
-		// console.log('Created',e);
-		// if (e['sourceType'] == 'scene') {
-		// handled with ScenesChanged event	
-		// }
-		if (e['sourceType'] == 'input') {
-			// in case it has audio, handle it
-			this.update_audio_list();
-		}
+		// a new input may be an audio-capable one
+		this.update_audio_list().catch(this.log_async_error);
 	}
 
 	on_source_destroyed (e) {
-		// console.log('Destroyed',e);
-		if (e['sourceType'] == 'input') {
-			// in it has audio, handle it
-			this.update_audio_list();
-		}
+		this.update_audio_list().catch(this.log_async_error);
 	}
 
 	on_source_renamed (e) {
-		// console.log('Renamed',e);
-		if (e['sourceType'] == 'scene' && this.scenes[ e['previousName'] ]) {
-			this.scenes[ e['previousName'] ].change_name(e['newName']);
-			this.scenes[ e['newName'] ] = this.scenes[ e['previousName'] ];
-			delete this.scenes[ e['previousName'] ];
-		}
+		// names changed, so the audio list labels need rebuilding
+		this.update_audio_list().catch(this.log_async_error);
 	}
 
 	async transition () {
 		if (this.studio_mode) {
-			await wrc.sendCommand('TransitionToProgram');
+			await wrc.safeCall('TriggerStudioModeTransition');
 		}
 	}
 
 	async update_audio_list () {
-		// first, check suitable input typeIDs versus master list
-		let suitable_audio_typeIds = [];
+		const list = await wrc.safeCall('GetInputList');
 
-		let types_response = await wrc.sendCommand('GetSourceTypesList');
+		if (!list)
+			return;
 
-		if (types_response && types_response.status == 'ok') {
-			for (var i = 0; i < types_response.types.length; i++) {
-				let t = types_response.types[i];
+		const inputs = list.inputs || [];
 
-				if (t.type == 'input' && t.caps.hasAudio) {
-					// console.log(t.typeId);
-					suitable_audio_typeIds.push(t.typeId);
-				}
-			}
-		}
-
-		// second, get special sources list as those are sceneless
+		// second, get special inputs (sceneless ones)
 		let special_sources = [];
 
-		let special_sources_response = await wrc.sendCommand('GetSpecialSources');
+		const special = await wrc.safeCall('GetSpecialInputs');
 
-		if (special_sources_response && special_sources_response.status == 'ok') {
-			for (let key in special_sources_response) {
-				// filter out default keys, everything else is a special source key
-				if (key != 'message-id' && key != 'messageId' && key != 'status')
-					special_sources.push( special_sources_response[key] );
+		if (special) {
+			// v5 returns names; unused slots are null
+			for (let key in special) {
+				if (special[key])
+					special_sources.push(special[key]);
 			}
 		}
 
-		// now get to checking all sources
-		let response = await wrc.sendCommand('GetSourcesList');
+		// v5 has no source-type capability list: an input answers
+		// GetInputAudioTracks only when it actually has audio.
+		let results = [];
+
+		if (inputs.length) {
+			try {
+				results = await wrc.batch(inputs.map(function (input) {
+					return {
+						requestType: 'GetInputAudioTracks',
+						requestData: { inputName: input.inputName },
+					};
+				}));
+			} catch (e) {
+				results = [];
+			}
+		}
 
 		let current_audio_names = [];
-		
-		if (response.status == 'ok' && response.sources) {
-			for (let i = 0; i < response['sources'].length; i++) {
-				let s = response['sources'][i];
-				
-				// type is 'scene' or 'input'
-				if (s.type == 'input' && suitable_audio_typeIds.includes(s.typeId)) {
-					// first, check if it already exists. If so, skip
-					let source_exists = false;
-					for (let j = 0; j < this.audio_list.length; j++) {
-						if (this.audio_list[j].name == s.name) {
-							source_exists = true;
-							current_audio_names.push(s.name);
-							break;
-						}
-					}
 
-					// create new SourceAudio when it's a new input
-					if (!source_exists) {
-						let sa = new SourceAudio(s, special_sources.includes(s.name));
-						this.audio_list.push(sa);
-						current_audio_names.push(s.name);
-						document.getElementById('audio_list').appendChild( sa.get_element() );
-					}
+		for (let i = 0; i < inputs.length; i++) {
+			const result = results[i];
+
+			// only 604 means "this input has no audio tracks"; any other failure
+			// (dropped batch entry, timeout) keeps the row on the audio path, so
+			// a transient fault cannot silently hide an audio input
+			if (result && !result.ok && result.error && result.error.code === 604)
+				continue;
+
+			if (!result || !result.ok) {
+				console.warn('WebRemote: GetInputAudioTracks failed for "' +
+					inputs[i].inputName + '", keeping as audio',
+					result ? result.error : 'no response');
+			}
+
+			const s = {
+				name:   inputs[i].inputName,
+				type:   'input',
+				typeId: inputs[i].inputKind,
+			};
+
+			// first, check if it already exists. If so, skip
+			let source_exists = false;
+			for (let j = 0; j < this.audio_list.length; j++) {
+				if (this.audio_list[j].name == s.name) {
+					source_exists = true;
+					current_audio_names.push(s.name);
+					break;
 				}
+			}
+
+			// create new SourceAudio when it's a new input
+			if (!source_exists) {
+				let sa = new SourceAudio(s, special_sources.includes(s.name));
+				this.audio_list.push(sa);
+				current_audio_names.push(s.name);
+				document.getElementById('audio_list').appendChild( sa.get_element() );
 			}
 		}
 
@@ -448,10 +539,6 @@ export default class WebRemote {
 			}
 		}
 
-	}
-
-	toggle_all_audio () {
-		// TODO for all active audio, toggle mute status (follow a global state?)
 	}
 
 	update_source_list () {
@@ -519,62 +606,92 @@ export default class WebRemote {
 	}
 
 	async set_text (inSource, inText) {
-		await wrc.sendCommand('SetTextFreetype2Properties', {'source': inSource, 'text': inText});
+		// v5 has no per-source-kind text request; the settings key is 'text'
+		await wrc.safeCall('SetInputSettings', {
+			inputName: inSource,
+			inputSettings: { text: inText },
+			overlay: true,
+		});
 	}
 
-	async update_status_list () {
-		let response = await wrc.sendCommand('GetStreamingStatus');
+	update_status_list (results) {
+		const stream = results[0];
+		const record = results[1];
+		const vcam   = results[2];
+		const replay = results[3];
+		const stats  = results[4];
+		const video  = results[5];
 
-		if (response.status == 'ok') {
-			this.streaming        = response.streaming;
-			this.recording        = response.recording;
-			this.recording_paused = response['recording-paused'];
+		if (stream.ok) {
+			const data = stream.data;
 
-			document.getElementById('status_stream').classList.toggle('good',   response.streaming);
-			document.getElementById('status_stream').classList.toggle('alert', !response.streaming);
-			
+			this.streaming = data.outputActive;
+
+			document.getElementById('status_stream').classList.toggle('good',   data.outputActive);
+			document.getElementById('status_stream').classList.toggle('alert', !data.outputActive);
+
 			document.getElementById('status_stream_text').innerHTML =
-				(response.streaming) ? 'LIVE: ' + response['stream-timecode'].replace(/\.\d+/,'') : 'Not streaming';
+				(data.outputActive) ? 'LIVE: ' + data.outputTimecode.replace(/\.\d+/,'') : 'Not streaming';
+		}
 
-			if (response.recording) {
+		if (record.ok) {
+			const data = record.data;
+
+			this.recording        = data.outputActive;
+			this.recording_paused = data.outputPaused;
+
+			if (data.outputActive) {
 				document.getElementById('status_recording').classList.remove('alert');
-				document.getElementById('status_recording').classList.toggle('warning',  response['recording-paused']);
-				document.getElementById('status_recording').classList.toggle('good',    !response['recording-paused']);
+				document.getElementById('status_recording').classList.toggle('warning',  data.outputPaused);
+				document.getElementById('status_recording').classList.toggle('good',    !data.outputPaused);
 
 				document.getElementById('status_recording_text').innerHTML =
-					(response['recording-paused']) ? 'Paused ' : 'REC ';
-				document.getElementById('status_recording_text').innerHTML += response['rec-timecode'].replace(/\.\d+/,'');
+					(data.outputPaused ? 'Paused ' : 'REC ') + data.outputTimecode.replace(/\.\d+/,'');
 			} else {
 				document.getElementById('status_recording').classList.remove('warning');
 				document.getElementById('status_recording').classList.remove('good');
 				document.getElementById('status_recording').classList.add('alert');
-				document.getElementById('status_recording_text').innerHTML = 'Not recording';	
+				document.getElementById('status_recording_text').innerHTML = 'Not recording';
 			}
 		}
-		
-		let response2 = await wrc.sendCommand('GetStats');
-		// use 'average-frame-time' 
 
-		if (response2.status == 'ok') {
+		if (vcam.ok) {
+			this.virtualcam_active = vcam.data.outputActive;
+			this.update_virtualcam_status();
+		}
+
+		if (replay.ok)
+			this.replay_active = replay.data.outputActive;
+
+		if (video && video.ok)
+			this.apply_video_data(video.data);
+
+		if (stats.ok) {
+			const data = stats.data;
+
 			document.getElementById('status_cpu').className =
-				(response2.stats['cpu-usage'] > 50) ? 'status-item warning' : 'status-item';
+				(data.cpuUsage > 50) ? 'status-item warning' : 'status-item';
 			document.getElementById('status_cpu_text').innerHTML =
-				Math.ceil(response2.stats['cpu-usage']) + '%';
+				Math.ceil(data.cpuUsage) + '%';
 
-			let fps_time_per_frame = 1000 / this.video_fps;
-			let avg_time_per_frame = response2.stats['average-frame-time']; // example 2.726 millis
-			let pct_time_per_frame = h.round(100.0 * avg_time_per_frame / fps_time_per_frame);
+			let pct_time_per_frame = 0;
 
-			let is_alert_state = (response2.stats['output-skipped-frames'] / response2.stats['output-total-frames'] > 0.05);
+			if (this.video_fps) {
+				const fps_time_per_frame = 1000 / this.video_fps;
+				const avg_time_per_frame = data.averageFrameRenderTime; // millis
+				pct_time_per_frame = h.round(100.0 * avg_time_per_frame / fps_time_per_frame);
+			}
+
+			let is_alert_state = (data.outputTotalFrames > 0 && data.outputSkippedFrames / data.outputTotalFrames > 0.05);
 			if (!is_alert_state) {
-				is_alert_state = (response2.stats['fps'] < this.video_fps);
+				is_alert_state = (data.activeFps < this.video_fps);
 			}
 			if (!is_alert_state) {
 				is_alert_state = (pct_time_per_frame > 50);
 			}
 			document.getElementById('status_frames').className = (is_alert_state) ? 'status-item alert' : 'status-item';
 			document.getElementById('status_frames_text').innerHTML =
-				Math.round(response2.stats['fps']) + ' fps, ' + pct_time_per_frame + '%, ' + response2.stats['output-skipped-frames'] + ' skipped';
+				Math.round(data.activeFps) + ' fps, ' + pct_time_per_frame + '%, ' + data.outputSkippedFrames + ' skipped';
 		}
 
 		this.update_stream_rec_status();
@@ -582,7 +699,7 @@ export default class WebRemote {
 
 	update_status_clock () {
 		this.clock_text.innerHTML = (new Date()).toLocaleTimeString('nl-NL');  // 24 hour format
-		this.clock.classList.toggle('alert', !wrc.connected);
+		this.clock.classList.toggle('alert', !wrc.isConnected);
 	}
 
 	setup_checklist () {
@@ -646,47 +763,20 @@ export default class WebRemote {
 
 	async start_streaming () {
 		if (!this.streaming)
-			await wrc.sendCommand('StartStreaming');
+			await wrc.safeCall('StartStream');
 	}
 
 	async stop_streaming () {
 		if (this.streaming)
-			await wrc.sendCommand('StopStreaming');
+			await wrc.safeCall('StopStream');
 	}
 
-	on_stream_starting () {
-		this.streaming       = false;
-		this.stream_starting = true;
-		this.stream_stopping = false;
+	on_stream_state (e) {
+		this.streaming       = e.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED';
+		this.stream_starting = e.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTING';
+		this.stream_stopping = e.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPING';
+
 		this.update_stream_rec_status();
-	}
-
-	on_stream_started () {
-		this.streaming       = true;
-		this.stream_starting = false;
-		this.stream_stopping = false;
-		this.update_stream_rec_status();
-	}
-
-	on_stream_stopping () {
-		this.streaming       = true;
-		this.stream_starting = false;
-		this.stream_stopping = true;
-		this.update_stream_rec_status();
-	}
-
-	on_stream_stopped () {
-		this.streaming       = false;
-		this.stream_starting = false;
-		this.stream_stopping = false;
-		this.update_stream_rec_status();
-	}
-
-	on_stream_status (e) {
-		// see: https://github.com/obsproject/obs-websocket/blob/4.9.1/docs/generated/protocol.md#streamstatus
-
-		// not used at the moment, because it only works when a stream is active
-		// this.update_stream_rec_status();
 	}
 
 	toggle_recording () {
@@ -705,74 +795,29 @@ export default class WebRemote {
 
 	async start_recording () {
 		if (!this.recording)
-			await wrc.sendCommand('StartRecording');
+			await wrc.safeCall('StartRecord');
 	}
 
 	async pause_recording () {
 		if (this.recording && !this.recording_paused)
-			await wrc.sendCommand('PauseRecording')
+			await wrc.safeCall('PauseRecord');
 	}
 
 	async resume_recording () {
 		if (this.recording && this.recording_paused)
-			await wrc.sendCommand('ResumeRecording')
+			await wrc.safeCall('ResumeRecord');
 	}
 
 	async stop_recording () {
 		if (this.recording)
-			await wrc.sendCommand('StopRecording');
+			await wrc.safeCall('StopRecord');
 	}
 
-	on_recording_starting () {
-		this.recording          = false;
-		this.recording_starting = true;
-		this.recording_stopping = false;
-		this.recording_paused   = false;
-
-		this.update_stream_rec_status();
-	}
-
-	on_recording_started () {
-		this.recording          = true;
-		this.recording_starting = false;
-		this.recording_stopping = false;
-		this.recording_paused   = false;
-
-		this.update_stream_rec_status();
-	}
-
-	on_recording_stopping () {
-		this.recording          = true;
-		this.recording_starting = false;
-		this.recording_stopping = true;
-		this.recording_paused   = false;
-
-		this.update_stream_rec_status();
-	}
-
-	on_recording_stopped () {
-		this.recording          = false;
-		this.recording_starting = false;
-		this.recording_stopping = false;
-		this.recording_paused   = false;
-
-		this.update_stream_rec_status();
-	}
-
-	on_recording_paused () {
-		this.recording          = true;
-		this.recording_starting = false;
-		this.recording_stopping = false;
-		this.recording_paused   = true;
-
-		this.update_stream_rec_status();
-	}
-
-	on_recording_resumed () {
-		this.recording          = true;
-		this.recording_starting = false;
-		this.recording_stopping = false;
-		this.recording_paused   = false;
+	on_record_state (e) {
+		this.recording          = e.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTED';
+		this.recording_starting = e.outputState === 'OBS_WEBSOCKET_OUTPUT_STARTING';
+		this.recording_stopping = e.outputState === 'OBS_WEBSOCKET_OUTPUT_STOPPING';
+		this.recording_paused   = e.outputPaused === true;
 
 		this.update_stream_rec_status();
 	}
@@ -812,11 +857,10 @@ export default class WebRemote {
 	}
 
 	async get_virtualcam_status () {
-		let response = await wrc.sendCommand('GetVirtualCamStatus');
+		const data = await wrc.safeCall('GetVirtualCamStatus');
 
-		if (response.status == 'ok') {
-			this.virtualcam_active = response['isVirtualCam'];
-		}
+		if (data)
+			this.virtualcam_active = data.outputActive;
 
 		this.update_virtualcam_status();
 	}
@@ -829,21 +873,20 @@ export default class WebRemote {
 	}
 
 	async start_virtualcam () {
-		await wrc.sendCommand('StartVirtualCam');
+		await wrc.safeCall('StartVirtualCam');
 	}
 
 	async stop_virtualcam () {
-		await wrc.sendCommand('StopVirtualCam');
+		await wrc.safeCall('StopVirtualCam');
 	}
 
-	on_virtualcam_started () {
-		this.virtualcam_active = true;
+	on_virtualcam_state (e) {
+		this.virtualcam_active = e.outputActive;
 		this.update_virtualcam_status();
 	}
 
-	on_virtualcam_stopped () {
-		this.virtualcam_active = false;
-		this.update_virtualcam_status();
+	on_replay_buffer_state (e) {
+		this.replay_active = e.outputActive;
 	}
 
 	update_virtualcam_status() {
@@ -856,21 +899,19 @@ export default class WebRemote {
 		document.getElementById('virtualcam_button_text').innerHTML = (this.virtualcam_active) ? 'Stop virtual cam' : 'Start virtual cam';
 	}
 
-	async update_outputs () {
-		let response = await wrc.sendCommand('ListOutputs');
-
+	update_outputs (result) {
 		let active_outputs = 0;
 		this.outputs       = [];
 
-		if (response.status == 'ok') {
-			for (let i = 0; i < response.outputs.length; i++) {
-				let o = response.outputs[i];
+		if (result && result.ok) {
+			for (let i = 0; i < result.data.outputs.length; i++) {
+				let o = result.data.outputs[i];
 
 				// skip over output types handled elsewhere
-				if (o.name != 'adv_stream' && o.name != 'adv_file_output' && o.name != 'virtualcam_output') {
+				if (o.outputName != 'adv_stream' && o.outputName != 'adv_file_output' && o.outputName != 'virtualcam_output') {
 					this.outputs.push(o);
 
-					if (o.active)
+					if (o.outputActive)
 						active_outputs++;
 				}
 			}
@@ -886,7 +927,7 @@ export default class WebRemote {
 		for (let j = 0; j < this.outputs.length; j++) {
 			let o     = this.outputs[j];
 
-			let id    = h.get_slug('output_item_' + o.name);
+			let id    = h.get_slug('output_item_' + o.outputName);
 			let li_el = document.getElementById(id);
 
 			if (!li_el) {
@@ -898,19 +939,18 @@ export default class WebRemote {
 				ul.appendChild(li_el);
 			}
 
-			let has_audio = o.flags.audio;
-			if (o.settings.uses_audio !== undefined)
-				has_audio = o.settings.uses_audio;
+			let flags     = o.outputFlags || {};
+			let has_audio = flags.OBS_OUTPUT_AUDIO === true || flags.OBS_OUTPUT_AV === true || flags.OBS_OUTPUT_ENCODED === true;
+			let has_video = flags.OBS_OUTPUT_VIDEO === true || flags.OBS_OUTPUT_AV === true || flags.OBS_OUTPUT_ENCODED === true;
 
-			li_el.classList.toggle('good',      o.active);
-			li_el.classList.toggle('warning',   o.reconnecting);
+			li_el.classList.toggle('good',      o.outputActive);
 			li_el.classList.toggle('has-audio', has_audio);
-			li_el.classList.toggle('has-video', o.flags.video);
-			li_el.innerHTML = `${o.name} (${o.type.replace('_output','')})`;
+			li_el.classList.toggle('has-video', has_video);
+			li_el.innerHTML = `${o.outputName} (${o.outputKind})`;
 		}
 
 		// remove outputs no longer found in list but still in page ul
-		let current_output_ids = this.outputs.map(x => h.get_slug('output_item_' + x.name));
+		let current_output_ids = this.outputs.map(x => h.get_slug('output_item_' + x.outputName));
 		for (let k = ul.children.length - 1; k >= 0; k--) {
 			let c = ul.children[k];
 
@@ -935,9 +975,6 @@ export default class WebRemote {
 			case 83: // s
 				this.toggle_studio_mode();
 				break;
-			case 77: // m
-				this.toggle_all_audio();
-				break;
 			case 70: // f
 				this.toggle_fullscreen();
 				break;
@@ -954,8 +991,8 @@ export default class WebRemote {
 				// 0 is handled as 10th scene (with index - 1 = 9)
 				var i = (inEvent.keyCode == 48) ? 9 : inEvent.keyCode - 49;
 				
-				if (this.scene_list[i]) {
-					this.scenes[ this.scene_list[i].name ].set_scene( inEvent.shiftKey );
+				if (this.scene_list[i] && this.scenes[this.scene_list[i].sceneName]) {
+					this.scenes[ this.scene_list[i].sceneName ].set_scene( inEvent.shiftKey );
 				}
 				break;
 			default:
